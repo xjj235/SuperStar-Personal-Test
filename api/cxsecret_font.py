@@ -70,6 +70,9 @@ def font2map(file: Union[IO, Path, str]) -> Dict[str, str]:
 
 def decrypt(dststr_fontmap: Dict[str, str], dst_str: str) -> str:
     """解码字体解密"""
+    if not dststr_fontmap:
+        # 页面无加密字体(无 cxSecretStyle)时,原样返回文字
+        return dst_str
     ori_str = ""
     for char in dst_str:
         if dstchar_hash := dststr_fontmap.get(f"uni{ord(char):X}"):

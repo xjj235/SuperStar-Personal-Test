@@ -208,6 +208,10 @@ def decode_questions_info(html_content) -> dict:
     soup = BeautifulSoup(html_content, "lxml")
     form_data = {}
     form_tag = soup.find("form")
+    if form_tag is None:
+        # 未找到表单,直接返回(避免后续崩溃)
+        logger.warning("未找到表单元素,返回空题目信息")
+        return form_data
 
     fd = FontDecoder(html_content)  # 加载字体
     
@@ -221,14 +225,17 @@ def decode_questions_info(html_content) -> dict:
 
     form_data['questions'] = []
     for div_tag in form_tag.find_all("div",class_="singleQuesId"): # 目前来说无论是单选还是多选的题class都是这个
-        q_title = replace_rtn(fd.decode(div_tag.find("div", class_="Zy_TItle").text))
+        _zt = div_tag.find("div", class_="Zy_TItle")
+        q_title = replace_rtn(fd.decode(_zt.text)) if _zt is not None else ''
         q_options = ''
-        for li_tag in div_tag.find("ul").find_all("li"):
+        _ul = div_tag.find("ul")
+        for li_tag in (_ul.find_all("li") if _ul is not None else []):
             q_options += replace_rtn(fd.decode(li_tag.text))+'\n'
         q_options=q_options[:-1]    # 去除尾部'\n'
 
         # 尝试使用 data 属性来判断题型
-        q_type_code = div_tag.find('div',class_='TiMu').attrs['data']
+        _tm = div_tag.find('div',class_='TiMu')
+        q_type_code = _tm.attrs['data'] if _tm is not None else '0'
         q_type = ''
         # 此处可能需要完善更多题型的判断
         if q_type_code == '0':
