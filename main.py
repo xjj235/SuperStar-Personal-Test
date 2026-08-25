@@ -93,16 +93,15 @@ if __name__ == '__main__':
         # 获取所有的课程列表
         all_course = chaoxing.get_course_list()
         course_task = []
-        # 手动输入要学习的课程ID列表
+        # 课程ID列表(支持云端/非交互环境)
         if not course_list:
             print("*" * 10 + "课程列表" + "*" * 10)
             for course in all_course:
                 print(f"ID: {course['courseId']} 课程名: {course['title']}")
             print("*" * 28)
-            try:
-                course_list = input("请输入想要学习的课程列表,以逗号分隔,例: 2151141,189191,198198\n").split(",")
-            except Exception as e:
-                raise FormatError("输入格式错误") from e
+            # 云端/非交互环境无输入,默认学习全部课程
+            course_list = [course["courseId"] for course in all_course]
+            logger.info("未指定课程ID(COURSE_LIST为空),将学习全部课程")
         # 筛选需要学习的课程
         for course in all_course:
             if course["courseId"] in course_list:
