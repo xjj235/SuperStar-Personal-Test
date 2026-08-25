@@ -60,13 +60,15 @@ def decode_course_point(_text):
                 continue
             _point_detail = {}
             _point_detail["id"] = re.findall(r"^cur(\d{1,20})$", _point.attrs["id"])[0]
-            _point_detail["title"] = _point.select_one("a.clicktitle").text.replace("\n",'').strip(' ')
+            _clicktitle = _point.select_one("a.clicktitle")
+            _point_detail["title"] = _clicktitle.text.replace("\n", '').strip(' ') if _clicktitle is not None else ''
             _point_detail["jobCount"] = 1   # 默认为1
             if _point.select_one("input.knowledgeJobCount"):
                 _point_detail["jobCount"] = _point.select_one("input.knowledgeJobCount").attrs["value"]
             else:
                 # 判断是不是因为需要解锁
-                if '解锁' in _point.select_one("span.bntHoverTips").text:
+                _tip = _point.select_one("span.bntHoverTips")
+                if _tip is not None and '解锁' in _tip.text:
                     _course_point["hasLocked"] = True
             
             _point_list.append(_point_detail)
