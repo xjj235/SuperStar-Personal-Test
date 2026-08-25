@@ -2,7 +2,7 @@ name: 学习通自动刷课
  
 on: # 什么时候触发
   push:
-    branches: [ main ]
+    branches: [ master, main ]
   # 定时触发(避开 DeepSeek API 高峰期)
   # GitHub Actions 的 cron 使用 UTC 时间,北京时间 = UTC + 8
   # DeepSeek API 高峰期约为北京时间白天到晚间(09:00-23:00),
