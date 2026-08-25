@@ -1,0 +1,48 @@
+name: 学习通自动刷课
+ 
+on: # 什么时候触发
+  push:
+    branches: [ main ]
+  # 定时触发(避开 DeepSeek API 高峰期)
+  # GitHub Actions 的 cron 使用 UTC 时间,北京时间 = UTC + 8
+  # DeepSeek API 高峰期约为北京时间白天到晚间(09:00-23:00),
+  # 凌晨为 API 低谷时段,响应更快更稳定,故只在凌晨运行:
+  #   '0 18 * * *'    = 北京时间 次日 02:00
+  #   '30 22 * * *'   = 北京时间 次日 06:30
+  schedule:
+    - cron: '0 18 * * *'
+    - cron: '30 22 * * *'
+ 
+jobs: # 执行的工作
+  run_chaoxing:
+    runs-on: ubuntu-latest # 在最新版本的 Ubuntu 操作系统环境下运行
+    steps: # 要执行的步骤
+      - name: Checkout code
+        uses: actions/checkout@v3  # 用于将github代码仓库的代码拷贝到工作目录中
+ 
+      - name: Set up Python
+        uses: actions/setup-python@v2 # 用于设置 Python 环境，它允许你指定要在工作环境中使用的 Python 版本
+        with:
+          python-version: '3.9'  # 选择要用的Python版本
+ 
+      - name: Install requirements.txt
+        run: | # 安装依赖包
+          pip install -r ./requirements.txt 
+ 
+      - name: Run main.py
+        # 所有账号、密码与 API Key 全部从 GitHub Secrets 读取，不要直接写在代码里！
+        # 在仓库 Settings -> Secrets and variables -> Actions 中配置以下密钥:
+        #   CX_USERNAME      : 你的学习通手机号
+        #   CX_PASSWORD      : 你的学习通密码
+        #   COURSE_LIST      : 要学习的课程ID列表(逗号分隔，如 244403509,123456)
+        #   DEEPSEEK_API_KEY : DeepSeek API Key,申请 https://platform.deepseek.com
+        #   TIKU_PROVIDER    : 题库类型,填写 TikuDeepSeek(仅支持 DeepSeek 答题)
+        #   TIKU_SUBMIT      : 是否提交答案:true=直接提交 / false=只保存不提交(默认 false,建议保持)
+        env:
+          CX_USERNAME: ${{ secrets.CX_USERNAME }}
+          CX_PASSWORD: ${{ secrets.CX_PASSWORD }}
+          COURSE_LIST: ${{ secrets.COURSE_LIST }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
+          TIKU_SUBMIT: ${{ secrets.TIKU_SUBMIT }}
+        run: python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" 

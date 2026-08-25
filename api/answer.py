@@ -1,0 +1,209 @@
+import configparser
+from pathlib import Path
+import json
+import os
+from api.logger import logger
+import random
+from urllib3 import disable_warnings,exceptions
+# 关闭警告
+disable_warnings(exceptions.InsecureRequestWarning)
+
+class CacheDAO:
+    """
+    @Author: SocialSisterYi
+    @Reference: https://github.com/SocialSisterYi/xuexiaoyi-to-xuexitong-tampermonkey-proxy
+    """
+    def __init__(self, file: str = "cache.json"):
+        self.cacheFile = Path(file)
+        if not self.cacheFile.is_file():
+            self.cacheFile.open("w").write("{}")
+        self.fp = self.cacheFile.open("r+", encoding="utf8")
+
+    def getCache(self, question: str):
+        self.fp.seek(0)
+        data = json.load(self.fp)
+        if isinstance(data, dict):
+            return data.get(question)
+
+    def addCache(self, question: str, answer: str):
+        self.fp.seek(0)
+        data: dict = json.load(self.fp)
+        data[question] = answer
+        self.fp.seek(0)
+        json.dump(data, self.fp, ensure_ascii=False, indent=4)
+
+
+class Tiku:
+    CONFIG_PATH = "config.ini"  # 默认配置文件路径
+    DISABLE = False     # 停用标志
+    SUBMIT = False      # 提交标志
+
+    def __init__(self) -> None:
+        self._name = None
+        self._api = None
+        self._conf = None
+
+    @property
+    def name(self):
+        return self._name
+    
+    @name.setter
+    def name(self, value):
+        self._name = value
+
+    @property
+    def api(self):
+        return self._api
+    
+    @api.setter
+    def api(self, value):
+        self._api = value
+
+    @property
+    def token(self):
+        return self._token
+
+    @token.setter
+    def token(self,value):
+        self._token = value
+
+    def init_tiku(self):
+        # 仅用于题库初始化，应该在题库载入后作初始化调用，随后才可以使用题库
+        # 尝试根据配置文件设置提交模式
+        if not self._conf:
+            self.config_set(self._get_conf())
+        if not self.DISABLE:
+            # 设置提交模式
+            self.SUBMIT = True if self._conf['submit'] == 'true' else False
+            # 调用自定义题库初始化
+            self._init_tiku()
+        
+    def _init_tiku(self):
+        # 仅用于题库初始化，例如配置token，交由自定义题库完成
+        pass
+
+    def config_set(self,config):
+        self._conf = config
+
+    def _get_conf(self):
+        """
+        查询题库配置,优先级:
+        1. 本地 config.ini 的 [tiku] 段
+        2. 环境变量(云端 GitHub Actions 无需 config.ini,直接注入环境变量)
+        都找不到则停用题库
+        """
+        try:
+            config = configparser.ConfigParser()
+            config.read(self.CONFIG_PATH, encoding="utf8")
+            if 'tiku' in config:
+                return config['tiku']
+        except (KeyError, FileNotFoundError):
+            pass
+        # 云端运行:从环境变量构造题库配置(provider 存在才启用)
+        env_conf = {
+            'provider': os.environ.get('TIKU_PROVIDER', ''),
+            'submit': os.environ.get('TIKU_SUBMIT', 'false'),
+            'api_key': os.environ.get('DEEPSEEK_API_KEY', ''),
+            'true_list': os.environ.get('TIKU_TRUE_LIST', '正确,对,√,是'),
+            'false_list': os.environ.get('TIKU_FALSE_LIST', '错误,错,×,否,不对,不正确'),
+        }
+        if env_conf['provider']:
+            logger.info("从环境变量载入题库配置")
+            return env_conf
+        logger.info("未找到tiku配置，已忽略题库功能")
+        self.DISABLE = True
+        return None
+
+    def query(self,q_info:dict):
+        if self.DISABLE:
+            return None
+
+        # 预处理，去除【单选题】这样与标题无关的字段
+        # 此处需要改进！！！
+        q_info['title'] = q_info['title'][6:]   # 暂时直接用裁切解决
+
+        # 先过缓存
+        cache_dao = CacheDAO()
+        answer = cache_dao.getCache(q_info['title'])
+        if answer:
+            logger.info(f"从缓存中获取答案：{q_info['title']} -> {answer}")
+            return answer.strip()
+        else:
+            answer = self._query(q_info)
+            if answer:
+                answer = answer.strip()
+                cache_dao.addCache(q_info['title'], answer)
+                logger.info(f"从{self.name}获取答案：{q_info['title']} -> {answer}")
+                return answer
+            logger.error(f"从{self.name}获取答案失败：{q_info['title']}")
+        return None
+    def _query(self,q_info:dict):
+        """
+        查询接口，交由自定义题库实现
+        """
+        pass
+
+    def get_tiku_from_config(self):
+        """
+        从配置文件加载题库，这个配置可以是用户提供，可以是默认配置文件
+        """
+        if not self._conf:
+            # 尝试从默认配置文件加载
+            self.config_set(self._get_conf())
+        if self.DISABLE:
+            return self
+        try:
+            cls_name = self._conf['provider']
+            if not cls_name:
+                raise KeyError
+        except KeyError:
+            logger.error("未找到题库配置，已忽略题库功能")
+            self.DISABLE = True
+            return self
+        # 优先从本模块查找(如 TikuYanxi);找不到再尝试从 api.tiku_deepseek 模块动态导入(如 TikuDeepSeek / TikuMix)
+        new_cls = globals().get(cls_name)
+        if new_cls is None:
+            try:
+                import importlib
+                module = importlib.import_module("api.tiku_deepseek")
+                new_cls = getattr(module, cls_name)
+            except (ImportError, AttributeError) as e:
+                logger.error(f"未找到题库实现: {cls_name} ({e})，已忽略题库功能")
+                self.DISABLE = True
+                return self
+        new_cls = new_cls()
+        new_cls.config_set(self._conf)
+        return new_cls
+    
+    def jugement_select(self,answer:str) -> bool:
+        """
+        这是一个专用的方法，要求配置维护两个选项列表，一份用于正确选项，一份用于错误选项，以应对题库对判断题答案响应的各种可能的情况
+        它的作用是将获取到的答案answer与可能的选项列对比并返回对应的布尔值
+        """
+        if self.DISABLE:
+            return False
+        true_list = self._conf['true_list'].split(',')
+        false_list = self._conf['false_list'].split(',')
+        # 对响应的答案作处理
+        answer = answer.strip()
+        if answer in true_list:
+            return True
+        elif answer in false_list:
+            return False
+        else:
+            # 无法判断，随机选择
+            logger.error(f'无法判断答案 -> {answer} 对应的是正确还是错误，请自行判断并加入配置文件重启脚本，本次将会随机选择选项')
+            return random.choice([True,False])
+    
+    def get_submit_params(self):
+        """
+        这是一个专用方法，用于根据当前设置的提交模式，响应对应的答题提交API中的pyFlag值
+        """
+        # 留空直接提交，1保存但不提交
+        if self.SUBMIT:
+            return ""
+        else:
+            return "1"
+
+# 按照以下模板实现更多题库(新增 provider 可放在 api/tiku_deepseek.py 等独立模块,
+# 或在 api/answer.py 的 get_tiku_from_config 中通过 importlib 动态加载)
