@@ -20,7 +20,7 @@ DEEPSEEK_BASE = "https://api.deepseek.com"
 TEXT_MODEL = "deepseek-v4-flash"                 # 文本 flash 模型,统一用于答题推理(禁止使用 PRO)
 VISION_MODEL = "deepseek-v4-flash-vision-exp"    # 视觉模型,仅用于把图片识别为文字
 TIMEOUT = 90
-MAX_TOKENS = 128
+MAX_TOKENS = 4096   # deepseek-v4-flash(-vision-exp) 是推理模型,token 太小时 content 会为空,须给足空间
 
 
 class TikuDeepSeek(Tiku):
