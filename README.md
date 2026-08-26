@@ -132,3 +132,6 @@ false_list = 错误,错,×,否,不对,不正确 ; 判断题"错误"的答案表�
 - [Samueli924/chaoxing](https://github.com/Samueli924/chaoxing)
 - [SocialSisterYi/xuexiaoyi-to-xuexitong-tampermonkey-proxy](https://github.com/SocialSisterYi/xuexiaoyi-to-xuexitong-tampermonkey-proxy)
 - [DeepSeek 开放平台](https://platform.deepseek.com/)
+
+> 当前使用学习通账号: [ACCOUNT-HIDDEN] 运行(最新配置)
+
