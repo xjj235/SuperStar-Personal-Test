@@ -360,8 +360,8 @@ class Chaoxing:
                         if res in o:
                             answer = o[:1]
                             break
-                # 如果未能匹配，依然随机答题
-                answer = answer if answer else random_answer(q['options'])
+                # 如果未能匹配，用 DeepSeek 答案本身兜底(绝不随机)
+                answer = answer if answer else (res[:1] if res else random_answer(q['options']))
             # 填充答案
             q['answerField'][f'answer{q["id"]}'] = answer
             logger.info(f'{q["title"]} 填写答案为 {answer}')
