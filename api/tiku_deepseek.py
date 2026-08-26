@@ -50,30 +50,28 @@ class TikuDeepSeek(Tiku):
         content = [{"type": "text", "text": self._build_prompt(q_info, image_text)}]
         answer_text = self._ask_with_retry(TEXT_MODEL, content)
         if not answer_text:
-            # 兜底:给出确定性答案,避免随机答题
-            logger.error("DeepSeek 多次尝试仍无答案,使用确定性兜底答案")
-            return self._default_answer(q_info.get("type"))
+            # 不填固定错误答案,该题留空待人工处理
+            logger.error(f"DeepSeek 多次重试仍无答案,该题留空: {q_info.get('title','')}")
+            return None
         logger.info(f"{self.name} 回答: {answer_text}")
         return self._parse_answer(answer_text, q_info.get("type"))
 
-    def _ask_with_retry(self, model: str, content: list, retries: int = 3) -> str:
-        """调用 DeepSeek,回答为空或失败时自动重试;返回非空 content,否则返回空串"""
+    def _ask_with_retry(self, model: str, content: list, retries: int = 5) -> str:
+        """调用 DeepSeek,回答为空或失败时自动重试(限流/服务错误);
+        重试时温度递增提高回答命中率。返回非空 content,否则返回空串。"""
+        temps = [0.1, 0.2, 0.3, 0.4, 0.5, 0.7]
         for attempt in range(retries):
-            result = self._call_api(model, content)
+            temperature = temps[min(attempt, len(temps) - 1)]
+            result = self._call_api(model, content, temperature)
             if result is not None:
                 text = (result["choices"][0]["message"].get("content") or "").strip()
                 if text:
                     return text
             if attempt < retries - 1:
-                logger.warning(f"DeepSeek 回答为空/失败,重试({attempt + 1}/{retries})...")
-                time.sleep(2)
+                wait = min(2 * (attempt + 1), 30)
+                logger.warning(f"DeepSeek 无答案/失败,重试({attempt + 1}/{retries}),等待{wait}s...")
+                time.sleep(wait)
         return ""
-
-    def _default_answer(self, q_type: str) -> str:
-        """确定性兜底答案:LLM 连续失败时给出固定答案,确保每道题都有答案且不随机"""
-        if q_type == "judgement":
-            return "正确"
-        return "A"   # single / multiple / completion / unknown 统一给 A(可人工核对)
 
     def _ocr_images(self, images: list) -> str:
         """
@@ -132,8 +130,8 @@ class TikuDeepSeek(Tiku):
         )
         return "\n".join(lines)
 
-    def _call_api(self, model: str, content: list) -> dict:
-        """调用 DeepSeek Chat Completions(OpenAI 兼容),成功返回响应 dict,失败返回 None"""
+    def _call_api(self, model: str, content: list, temperature: float = 0.1) -> dict:
+        """调用 DeepSeek Chat Completions(OpenAI 兼容),成功返回响应 dict,失败/限流返回 None(由外层重试处理)"""
         try:
             resp = requests.post(
                 f"{DEEPSEEK_BASE}/chat/completions",
@@ -145,7 +143,7 @@ class TikuDeepSeek(Tiku):
                     "model": model,
                     "messages": [{"role": "user", "content": content}],
                     "max_tokens": MAX_TOKENS,
-                    "temperature": 0.1,
+                    "temperature": temperature,
                 },
                 timeout=TIMEOUT,
                 verify=False,
@@ -153,13 +151,18 @@ class TikuDeepSeek(Tiku):
         except Exception as e:
             logger.error(f"{self.name} 请求异常: {type(e).__name__}: {e}")
             return None
+        if resp.status_code == 429:
+            # 触发限流,等待较长时间后由外层重试
+            logger.warning(f"{self.name} 触发限流(429),等待 30s 后由重试逻辑重试")
+            time.sleep(30)
+            return None
         if resp.status_code != 200:
-            logger.error(f"{self.name} 请求失败 [{resp.status_code}]: {resp.text[:500]}")
+            logger.error(f"{self.name} 请求失败 [{resp.status_code}]: {resp.text[:300]}")
             return None
         try:
             return resp.json()
         except Exception:
-            logger.error(f"{self.name} 响应解析失败: {resp.text[:500]}")
+            logger.error(f"{self.name} 响应解析失败: {resp.text[:300]}")
             return None
 
     def _fetch_image_base64(self, url: str):

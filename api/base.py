@@ -340,8 +340,9 @@ class Chaoxing:
             res = self.tiku.query(q)
             answer = ''
             if not res:
-                # 随机答题
-                answer = random_answer(q['options'])
+                # 无答案(API多次重试仍失败):留空,不随机、不填错误固定答案,交由人工核对
+                logger.error(f"题目无有效答案(API失败),该题留空待人工处理: {q['title']}")
+                answer = ''
             else:
                 # 根据响应结果选择答案
                 options_list = multi_cut(q['options'])
