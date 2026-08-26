@@ -11,6 +11,7 @@ DeepSeek AI 答题 provider
 密钥读取顺序:环境变量 DEEPSEEK_API_KEY(云端 GitHub Actions 注入) > 配置文件 [tiku] api_key(本地)
 """
 import os
+import time
 import base64
 import requests
 from api.answer import Tiku
@@ -47,13 +48,32 @@ class TikuDeepSeek(Tiku):
                 logger.warning("图片识别文字失败,将仅凭题目文字作答")
         # 统一用文本 flash 模型推理答案(禁止使用 PRO 模型)
         content = [{"type": "text", "text": self._build_prompt(q_info, image_text)}]
-        result = self._call_api(TEXT_MODEL, content)
+        answer_text = self._ask_with_retry(TEXT_MODEL, content)
+        if not answer_text:
+            # 兜底:给出确定性答案,避免随机答题
+            logger.error("DeepSeek 多次尝试仍无答案,使用确定性兜底答案")
+            return self._default_answer(q_info.get("type"))
+        logger.info(f"{self.name} 回答: {answer_text}")
+        return self._parse_answer(answer_text, q_info.get("type"))
 
-        if result is None:
-            return None
-        answer = result["choices"][0]["message"]["content"].strip()
-        logger.info(f"{self.name} 回答: {answer}")
-        return self._parse_answer(answer, q_info.get("type"))
+    def _ask_with_retry(self, model: str, content: list, retries: int = 3) -> str:
+        """调用 DeepSeek,回答为空或失败时自动重试;返回非空 content,否则返回空串"""
+        for attempt in range(retries):
+            result = self._call_api(model, content)
+            if result is not None:
+                text = (result["choices"][0]["message"].get("content") or "").strip()
+                if text:
+                    return text
+            if attempt < retries - 1:
+                logger.warning(f"DeepSeek 回答为空/失败,重试({attempt + 1}/{retries})...")
+                time.sleep(2)
+        return ""
+
+    def _default_answer(self, q_type: str) -> str:
+        """确定性兜底答案:LLM 连续失败时给出固定答案,确保每道题都有答案且不随机"""
+        if q_type == "judgement":
+            return "正确"
+        return "A"   # single / multiple / completion / unknown 统一给 A(可人工核对)
 
     def _ocr_images(self, images: list) -> str:
         """

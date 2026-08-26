@@ -40,4 +40,4 @@ jobs: # 执行的工作
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
           TIKU_SUBMIT: ${{ secrets.TIKU_SUBMIT }}
-        run: python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 2
+        run: python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1
