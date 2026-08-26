@@ -194,10 +194,10 @@ class TikuDeepSeek(Tiku):
         answer = answer.strip(" ：:。.,，、;；\"'`")
 
         if q_type == "judgement":
-            # 映射到 config 中 true_list / false_list 的词表,交由基类 jugement_select 判断
-            if answer.upper() in ("TRUE", "T", "RIGHT", "YES", "正确", "对", "√", "是"):
+            # 判断题选项 A=对/正确, B=错/错误;DeepSeek 可能返回 A/B 或中文,统一映射到 true/false 词表
+            if answer.upper() in ("A", "TRUE", "T", "RIGHT", "YES", "正确", "对", "√", "是"):
                 return "正确"
-            if answer.upper() in ("FALSE", "F", "WRONG", "NO", "错误", "错", "×", "否", "不对", "不正确"):
+            if answer.upper() in ("B", "FALSE", "F", "WRONG", "NO", "错误", "错", "×", "否", "不对", "不正确"):
                 return "错误"
             return answer  # 无法识别时交给 jugement_select 兜底(可能随机)
 

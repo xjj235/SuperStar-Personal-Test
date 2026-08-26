@@ -285,8 +285,11 @@ class Chaoxing:
                 res = answer.split(char)
                 if len(res)>1:
                     return res
-            logger.warning(f"未能从网页中提取题目信息，以下为相关信息：\n{answer}\n\n{_ORIGIN_HTML_CONTENT}\n")     # 尝试输出网页内容和选项信息
-            logger.warning("未能正确提取题目选项信息！请反馈并提供以上信息。")
+            # 多选答案是单个选项字母(如 D)时,直接返回该字母,避免默认ABCD导致全选
+            s = (answer or '').strip().upper()
+            if len(s) == 1 and s in "ABCDEFGH":
+                return [s]
+            logger.warning("未能正确提取题目选项信息，请反馈。")
             return ['A','B','C','D']    # 默认多选题为4个选项
 
 
