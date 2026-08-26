@@ -18,7 +18,9 @@ from api.answer import Tiku
 from api.logger import logger
 
 DEEPSEEK_BASE = "https://api.deepseek.com"
+WEB_SEARCH_BASE = "https://api.deepseek.com/anthropic/v1"   # 联网搜索用 Anthropic 兼容端点(不同于 chat-completions)
 TEXT_MODEL = "deepseek-v4-flash"                 # 文本 flash 模型,统一用于答题推理(禁止使用 PRO)
+WEB_SEARCH_MODEL = "deepseek-v4-flash"           # 联网搜索模型
 VISION_MODEL = "deepseek-v4-flash-vision-exp"    # 视觉模型,仅用于把图片识别为文字
 TIMEOUT = 90
 MAX_TOKENS = 4096   # deepseek-v4-flash(-vision-exp) 是推理模型,token 太小时 content 会为空,须给足空间
@@ -50,11 +52,56 @@ class TikuDeepSeek(Tiku):
         content = [{"type": "text", "text": self._build_prompt(q_info, image_text)}]
         answer_text = self._ask_with_retry(TEXT_MODEL, content)
         if not answer_text:
-            # 不填固定错误答案,该题留空待人工处理
-            logger.error(f"DeepSeek 多次重试仍无答案,该题留空: {q_info.get('title','')}")
+            # 常规推理无答案 → 让 DeepSeek 联网搜索,给出合理答案
+            logger.warning("DeepSeek 常规推理无答案,尝试联网搜索...")
+            answer_text = self._ask_with_web_search(content)
+        if not answer_text:
+            # 联网搜索仍无答案:返回 None(由 study_work 兜底,保证提交不失败)
+            logger.error(f"DeepSeek 推理与联网搜索均无答案: {q_info.get('title','')}")
             return None
         logger.info(f"{self.name} 回答: {answer_text}")
         return self._parse_answer(answer_text, q_info.get("type"))
+
+    def _ask_with_web_search(self, content: list) -> str:
+        """DeepSeek 原生联网搜索:用 Anthropic 兼容 Messages API + web_search_20250305 服务器工具。
+        让 DeepSeek 联网检索后给出答案;返回非空答案文本,否则返回空串。"""
+        payload = {
+            "model": WEB_SEARCH_MODEL,
+            "max_tokens": MAX_TOKENS,
+            "temperature": 0.2,
+            "messages": [{"role": "user", "content": content}],
+            "tools": [{"type": "web_search_20250305"}],
+        }
+        try:
+            resp = requests.post(
+                f"{WEB_SEARCH_BASE}/messages",
+                headers={
+                    "x-api-key": self._api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json=payload,
+                timeout=180,
+                verify=False,
+            )
+        except Exception as e:
+            logger.error(f"DeepSeek 联网搜索请求异常: {type(e).__name__}: {e}")
+            return ""
+        if resp.status_code != 200:
+            logger.error(f"DeepSeek 联网搜索失败 [{resp.status_code}]: {resp.text[:300]}")
+            return ""
+        try:
+            data = resp.json()
+        except Exception:
+            logger.error(f"DeepSeek 联网搜索响应解析失败: {resp.text[:300]}")
+            return ""
+        texts = []
+        for block in data.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "text":
+                texts.append(block.get("text", ""))
+        answer_text = "".join(texts).strip()
+        logger.info(f"DeepSeek 联网搜索 回答: {answer_text}")
+        return answer_text
 
     def _ask_with_retry(self, model: str, content: list, retries: int = 5) -> str:
         """调用 DeepSeek,回答为空或失败时自动重试(限流/服务错误);
