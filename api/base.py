@@ -343,9 +343,12 @@ class Chaoxing:
             res = self.tiku.query(q)
             answer = ''
             if not res:
-                # 无答案(API多次重试仍失败):留空,不随机、不填错误固定答案,交由人工核对
-                logger.error(f"题目无有效答案(API失败),该题留空待人工处理: {q['title']}")
-                answer = ''
+                # 无答案(API多次重试仍失败):给确定性兜底答案,保证提交成功、不随机、不留空
+                if q['type'] == 'judgement':
+                    answer = 'true'
+                else:
+                    answer = 'A'
+                logger.error(f"题目无答案,使用确定性兜底答案({answer}),不可恢复时人工核对: {q['title']}")
             else:
                 # 根据响应结果选择答案
                 options_list = multi_cut(q['options'])
