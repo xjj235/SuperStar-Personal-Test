@@ -3,6 +3,7 @@ name: 学习通自动刷课
 on: # 什么时候触发
   push:
     branches: [ master, main ]
+  workflow_dispatch:  # 允许手动触发(用于绕过 push 触发异常)
   # 定时触发(已暂时注释)。如需每天自动运行,取消下面 3 行注释即可。
   # schedule:
   #   - cron: '0 18 * * *'    # 北京时间 次日 02:00
