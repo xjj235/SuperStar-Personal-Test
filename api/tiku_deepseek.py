@@ -267,7 +267,9 @@ class TikuDeepSeek(Tiku):
                 return "正确"
             if answer.upper() in ("B", "FALSE", "F", "WRONG", "NO", "错误", "错", "×", "否", "不对", "不正确"):
                 return "错误"
-            return answer  # 无法识别时交给 jugement_select 兜底(可能随机)
+            # 无法识别的值(如 *** 等)一律视为"错误",避免产生非法答案
+            logger.warning(f"判断题答案不识别({answer!r}),默认视为'错误'")
+            return "错误"
 
         if q_type == "multiple":
             # 提取所有 A-H 字母,去重排序,逗号分隔(study_work 的 multi_cut 依赖分隔符)
