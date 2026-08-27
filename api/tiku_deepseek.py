@@ -14,6 +14,7 @@ import os
 import time
 import base64
 import requests
+from typing import Optional
 from api.answer import Tiku
 from api.logger import logger
 
@@ -49,22 +50,36 @@ class TikuDeepSeek(Tiku):
             if not image_text:
                 logger.warning("图片识别文字失败,将仅凭题目文字作答")
         # 统一用文本 flash 模型推理答案(禁止使用 PRO 模型)
+        q_type = q_info.get("type")
         content = [{"type": "text", "text": self._build_prompt(q_info, image_text)}]
         answer_text = self._ask_with_retry(TEXT_MODEL, content)
-        if not answer_text:
-            # ① 常规推理无答案 → 让 DeepSeek 联网搜索,给出合理答案
-            logger.warning("DeepSeek 常规推理无答案,尝试联网搜索...")
+        parsed = self._parse_answer(answer_text, q_type) if answer_text else None
+
+        # ① 回答无法识别(如 ***/乱码)→ 按题目真实答题要求重问一次,让模型输出符合要求的答案
+        if not parsed and answer_text:
+            logger.warning(f"DeepSeek 回答无法识别({answer_text!r}),按题目答题要求重新提问...")
+            req_content = [{"type": "text", "text": self._build_prompt(q_info, image_text, require_option_value=True)}]
+            answer_text = self._ask_with_retry(TEXT_MODEL, req_content)
+            parsed = self._parse_answer(answer_text, q_type) if answer_text else None
+
+        # ② 仍无有效答案 → 网页搜索,给一个近似答案填写(而不是盲兜底)
+        if not parsed:
+            logger.warning("DeepSeek 无有效答案,尝试网页搜索给出近似答案...")
             answer_text = self._ask_with_web_search(content)
-        if not answer_text:
-            # ② 联网搜索仍无答案 → 给一个"最接近"的答案(宽松再问一次)
-            logger.warning("联网搜索也无答案,尝试最接近答案...")
+            parsed = self._parse_answer(answer_text, q_type) if answer_text else None
+
+        # ③ 网页搜索仍无 → 高温"最接近"答案(宽松再问一次)
+        if not parsed:
+            logger.warning("网页搜索也无答案,尝试最接近答案...")
             answer_text = self._ask_fallback(TEXT_MODEL, content)
-        if not answer_text:
-            # ③ 三级均失败:返回 None(由 study_work 用最接近兜底,保证提交不失败)
-            logger.error(f"DeepSeek 推理/联网/最接近均无答案: {q_info.get('title','')}")
+            parsed = self._parse_answer(answer_text, q_type) if answer_text else None
+
+        if not parsed:
+            # ④ 四级(推理/重问/网页搜索/最接近)均失败:返回 None(由 study_work 用最后防线兜底,保证提交不失败)
+            logger.error(f"DeepSeek 推理/重问/网页搜索/最接近均无有效答案: {q_info.get('title','')}")
             return None
-        logger.info(f"{self.name} 回答: {answer_text}")
-        return self._parse_answer(answer_text, q_info.get("type"))
+        logger.info(f"{self.name} 回答: {answer_text} -> {parsed}")
+        return parsed
 
     def _ask_fallback(self, model: str, content: list, retries: int = 3) -> str:
         """最接近答案:用更高温度再问一次 DeepSeek,要求选出最可能正确的答案。
@@ -175,8 +190,9 @@ class TikuDeepSeek(Tiku):
         logger.info(f"图片识别出的文字: {text}")
         return text if text and text != "无" else ""
 
-    def _build_prompt(self, q_info: dict, image_text: str = "") -> str:
-        """把题目与选项(含图片识别出的文字)拼成纯文本 prompt,要求模型只输出答案"""
+    def _build_prompt(self, q_info: dict, image_text: str = "", require_option_value: bool = False) -> str:
+        """把题目与选项(含图片识别出的文字)拼成纯文本 prompt,要求模型只输出答案。
+        require_option_value=True 时(重问),强调按本题选项的真实取值输出,而非字母/标准词。"""
         q_type = q_info.get("type", "unknown")
         lines = [
             "你是学习通测验答题助手。请根据题目内容选出正确答案。",
@@ -189,13 +205,26 @@ class TikuDeepSeek(Tiku):
         options = q_info.get("options") or ""
         if options:
             lines.append("选项:\n" + options)
-        lines.append(
-            "输出要求: 必须给出一个确定答案,即使不确定也请选出最可能的一项,"
-            "严禁输出“无法确定”、“不清楚”或留空;"
-            "单选题只输出一个字母(如 A);"
-            "多选题输出多个字母并用英文逗号分隔(如 A,C);"
-            "判断题输出“正确”或“错误”。"
-        )
+        # 题目选项的真实 data 值(如判断题的 对/错、true/false)——让模型按题目实际要求作答
+        opt_data = q_info.get("option_data") or []
+        real_vals = [str(v) for v in opt_data if str(v) and '*' not in str(v)]
+        if q_type == "judgement":
+            if real_vals:
+                if require_option_value:
+                    lines.append(f"你的上一次回答不符合本题要求。本题选项实际取值只有: {'、'.join(real_vals)}。请严格只输出其中一个取值本身(如“对”),不要输出字母A/B,也不要输出“正确/错误”等词。")
+                else:
+                    lines.append(f"本题为判断题,选项实际取值为: {'、'.join(real_vals)}。请直接输出其中一个取值本身(如“对”),不要输出字母A/B,也不要输出“正确/错误”等词。")
+            else:
+                lines.append("判断题请只输出“正确”或“错误”。")
+        else:
+            lines.append(
+                "输出要求: 必须给出一个确定答案,即使不确定也请选出最可能的一项,"
+                "严禁输出“无法确定”、“不清楚”或留空;"
+                "单选题只输出一个字母(如 A);"
+                "多选题输出多个字母并用英文逗号分隔(如 A,C)。"
+            )
+            if require_option_value:
+                lines.append("你的上一次回答不符合要求,请严格按上述格式只输出答案,不要输出其他内容。")
         return "\n".join(lines)
 
     def _call_api(self, model: str, content: list, temperature: float = 0.1) -> dict:
@@ -253,8 +282,9 @@ class TikuDeepSeek(Tiku):
             logger.error(f"图片下载异常: {url} -> {type(e).__name__}: {e}")
         return None
 
-    def _parse_answer(self, answer: str, q_type: str) -> str:
-        """把模型输出规整成 answer.py / study_work 能直接使用的答案格式"""
+    def _parse_answer(self, answer: str, q_type: str) -> Optional[str]:
+        """把模型输出规整成 answer.py / study_work 能直接使用的答案格式。
+        判断题无法识别时返回 None(由 _query 按题目答题要求重问/网页搜索);客观题无法提取字母时返回空串。"""
         answer = answer.strip()
         # 去掉常见前缀与空白标点
         for prefix in ("答案：", "答案:", "答案", "正确答案", "正确选项", "选择", "选"):
@@ -262,20 +292,39 @@ class TikuDeepSeek(Tiku):
         answer = answer.strip(" ：:。.,，、;；\"'`")
 
         if q_type == "judgement":
-            # 判断题选项 A=对/正确, B=错/错误;DeepSeek 可能返回 A/B 或中文,统一映射到 true/false 词表
-            if answer.upper() in ("A", "TRUE", "T", "RIGHT", "YES", "正确", "对", "√", "是"):
+            # 语义匹配:从 DS 回答中提取"对/错"倾向(支持字母、中文、符号、英文),
+            # 而不是把无法识别的值(如 ***)盲归为某一项——无法识别时返回 None,由 _query 按题目答题要求重问/网页搜索
+            up = answer.upper().strip()
+            # ① 精确:单字母/单词/符号
+            if up in ("A", "T", "Y", "TRUE", "RIGHT", "YES", "是", "√", "对"):
                 return "正确"
-            if answer.upper() in ("B", "FALSE", "F", "WRONG", "NO", "错误", "错", "×", "否", "不对", "不正确"):
+            if up in ("B", "F", "N", "FALSE", "WRONG", "NO", "否", "×", "错"):
                 return "错误"
-            # 无法识别的值(如 *** 等)一律视为"错误",避免产生非法答案
-            logger.warning(f"判断题答案不识别({answer!r}),默认视为'错误'")
-            return "错误"
+            # ② 含冲突子串的长词("不正确/不对"含"正确/对","不错"含"错",顺序不可反)
+            if "不正确" in up or "不对" in up or "错误" in up:
+                return "错误"
+            if "不错" in up:
+                return "正确"
+            # ③ 回答里带单个选项字母(如"是B"/"B选项" → B 即错误)
+            if "A" in up and "B" not in up:
+                return "正确"
+            if "B" in up and "A" not in up:
+                return "错误"
+            # ④ 其余包含匹配
+            if "正确" in up or "对" in up or "是" in up:
+                return "正确"
+            if "错" in up or "否" in up:
+                return "错误"
+            logger.warning(f"判断题答案无法识别({answer!r}),将按题目答题要求重新提问")
+            return None
 
         if q_type == "multiple":
             # 提取所有 A-H 字母,去重排序,逗号分隔(study_work 的 multi_cut 依赖分隔符)
             letters = sorted(set(ch for ch in answer.upper() if ch in "ABCDEFGH"))
-            return ",".join(letters) if letters else answer
+            return ",".join(letters) if letters else ""
 
-        # single / completion / unknown:提取首个选项字母,否则原样返回(填空/无法识别)
-        letters = [ch for ch in answer.upper() if ch in "ABCDEFGH"]
-        return letters[0] if letters else answer
+        # single:提取首个选项字母;completion/unknown:原样返回(填空/无法识别)
+        if q_type == "single":
+            letters = [ch for ch in answer.upper() if ch in "ABCDEFGH"]
+            return letters[0] if letters else ""
+        return answer

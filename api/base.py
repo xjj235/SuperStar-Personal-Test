@@ -400,9 +400,11 @@ class Chaoxing:
             res = self.tiku.query(q)
             answer = ''
             if not res:
-                # 三级(推理/联网/最接近)均失败:给客观"最接近"答案,保证提交成功、不随机、不留空
-                answer = 'true' if q['type'] == 'judgement' else 'A'
-                logger.error(f"题目三级均无答案,使用最接近答案({answer}): {q['title']}")
+                # 四级(推理/重问/网页搜索/最接近)均失败:给客观"最接近"答案,保证提交成功、不随机、不留空
+                # 经 _match_answer 按题目真实答题要求映射(如判断题填该题实际的 对/错 或 true/false,不硬编码)
+                closest = '正确' if q['type'] == 'judgement' else 'A'
+                answer = self._match_answer(closest, q)
+                logger.error(f"题目四级均无答案,使用最接近答案({answer}): {q['title']}")
             else:
                 # 匹配:把 DeepSeek 答案按题目实际要求填写
                 answer = self._match_answer(res, q)
