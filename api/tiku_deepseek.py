@@ -52,15 +52,33 @@ class TikuDeepSeek(Tiku):
         content = [{"type": "text", "text": self._build_prompt(q_info, image_text)}]
         answer_text = self._ask_with_retry(TEXT_MODEL, content)
         if not answer_text:
-            # 常规推理无答案 → 让 DeepSeek 联网搜索,给出合理答案
+            # ① 常规推理无答案 → 让 DeepSeek 联网搜索,给出合理答案
             logger.warning("DeepSeek 常规推理无答案,尝试联网搜索...")
             answer_text = self._ask_with_web_search(content)
         if not answer_text:
-            # 联网搜索仍无答案:返回 None(由 study_work 兜底,保证提交不失败)
-            logger.error(f"DeepSeek 推理与联网搜索均无答案: {q_info.get('title','')}")
+            # ② 联网搜索仍无答案 → 给一个"最接近"的答案(宽松再问一次)
+            logger.warning("联网搜索也无答案,尝试最接近答案...")
+            answer_text = self._ask_fallback(TEXT_MODEL, content)
+        if not answer_text:
+            # ③ 三级均失败:返回 None(由 study_work 用最接近兜底,保证提交不失败)
+            logger.error(f"DeepSeek 推理/联网/最接近均无答案: {q_info.get('title','')}")
             return None
         logger.info(f"{self.name} 回答: {answer_text}")
         return self._parse_answer(answer_text, q_info.get("type"))
+
+    def _ask_fallback(self, model: str, content: list, retries: int = 3) -> str:
+        """最接近答案:用更高温度再问一次 DeepSeek,要求选出最可能正确的答案。
+        仅当推理与联网搜索都失败时调用;仍无有效答案返回空串。"""
+        for attempt in range(retries):
+            result = self._call_api(model, content, temperature=0.9)
+            if result is not None:
+                text = (result["choices"][0]["message"].get("content") or "").strip()
+                if text and text.replace('*', '').strip() != '':
+                    logger.info(f"最接近答案: {text}")
+                    return text
+            if attempt < retries - 1:
+                time.sleep(2)
+        return ""
 
     def _ask_with_web_search(self, content: list) -> str:
         """DeepSeek 原生联网搜索:用 Anthropic 兼容 Messages API + web_search_20250305 服务器工具。
@@ -112,6 +130,9 @@ class TikuDeepSeek(Tiku):
             result = self._call_api(model, content, temperature)
             if result is not None:
                 text = (result["choices"][0]["message"].get("content") or "").strip()
+                # 剔除无意义占位(如 ***、****、... 等),视为无答案,触发重试/联网搜索
+                if text and text.replace('*', '').replace('。', '').replace('.', '').strip() == '':
+                    text = ''
                 if text:
                     return text
             if attempt < retries - 1:

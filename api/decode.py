@@ -240,9 +240,13 @@ def decode_questions_info(html_content) -> dict:
         _zt = div_tag.find("div", class_="Zy_TItle")
         q_title = replace_rtn(fd.decode(_zt.text)) if _zt is not None else ''
         q_options = ''
+        opt_data = []            # 题目每个选项的真实 data 值(按 A,B,C... 顺序),用于按题目实际要求填答
         _ul = div_tag.find("ul")
         for li_tag in (_ul.find_all("li") if _ul is not None else []):
             q_options += replace_rtn(fd.decode(li_tag.text))+'\n'
+            _sp = li_tag.find("span")
+            if _sp is not None and _sp.get("data"):
+                opt_data.append(str(_sp.get("data")))
         q_options=q_options[:-1]    # 去除尾部'\n'
 
         # 尝试使用 data 属性来判断题型
@@ -271,6 +275,7 @@ def decode_questions_info(html_content) -> dict:
             'options':q_options,    # 选项 可提供给题库作为辅助
             'type': q_type,      # 题型 可提供给题库作为辅助
             'images': q_images,  # 题目/选项中的图片URL列表(可能为空)
+            'option_data': opt_data,  # 每题选项的真实 data 值(按 A,B,C 顺序),用于按题目要求填答
             'answerField':{
                 'answer'+div_tag.attrs["data"]:'',   # 答案填入处
                 'answertype'+div_tag.attrs["data"]:q_type_code

@@ -251,6 +251,63 @@ class Chaoxing:
         _url = f"https://mooc1.chaoxing.com/ananas/job/document?jobid={_job['jobid']}&knowledgeid={re.findall(r'nodeId_(.*?)-', _job['otherinfo'])[0]}&courseid={_course['courseId']}&clazzid={_course['clazzId']}&jtoken={_job['jtoken']}&_dc={get_timestamp()}"
         _resp = _session.get(_url)
 
+    def _match_answer(self, res, q, forced=False) -> str:
+        """把 DeepSeek 答案匹配成【学习通该题的实际填写值】。
+        优先使用题目选项的真实 data 值(option_data);无则回退到标准字母/true-false。
+        若无法确定,交由 DeepSeek 辅助(已由三级答题给出)。"""
+        qtype = q.get('type')
+        opt_data = q.get('option_data') or []
+        r = str(res).strip()
+        if qtype == 'multiple':
+            letters = sorted(set(ch for ch in r.upper() if ch in "ABCDEFGH"))
+            vals = self._data_of(letters, opt_data)
+            return (vals or ('A' if forced else ''))
+        if qtype == 'judgement':
+            is_true = r in ('正确', '对', '√', '是', 'true', 'TRUE', 'T', 'A')
+            # 按题目实际:找表示"对/正确"或"错/错误"的选项 data 值
+            for d in opt_data:
+                dl = str(d).lower()
+                if is_true and dl in ('true', '1', '对', '正确', '是', '√', '肯定'):
+                    return str(d)
+                if not is_true and dl in ('false', '0', '错', '错误', '否', '×', '否定'):
+                    return str(d)
+            return 'true' if is_true else 'false'
+        # single / unknown
+        letters = [ch for ch in r.upper() if ch in "ABCDEFGH"]
+        if letters:
+            return self._data_of(letters, opt_data) or letters[0]
+        if forced:
+            return 'A'
+        return (r[:1] if r else '')
+
+    def _data_of(self, letters, opt_data) -> str:
+        """按题目选项真实 data 值取答案:每个选项字母 → 对应 data 值(无则用字母本身)"""
+        vals = []
+        for ch in letters:
+            idx = ord(ch) - ord('A')
+            if 0 <= idx < len(opt_data) and opt_data[idx]:
+                vals.append(str(opt_data[idx]))
+            elif ch.isalpha():
+                vals.append(ch)
+        return "".join(vals)
+
+    def _verify_consistent(self, res, answer, q) -> bool:
+        """校验 DeepSeek 答案 与 系统填写值 是否一致(按题目实际要求,无转义失败/答案不一致)"""
+        qtype = q.get('type')
+        opt_data = q.get('option_data') or []
+        a = str(answer or '')
+        if qtype == 'judgement':
+            # 判断题填 true/false,或等于该题选项的 data 值,即合法
+            return a in ('true', 'false') or (bool(opt_data) and a in [str(x) for x in opt_data])
+        res_letters = set(ch for ch in str(res).upper() if ch in "ABCDEFGH")
+        if not res_letters:
+            return False
+        # 答案必须是 res 字母对应的选项 data 值(或字母,且属于 res)
+        for idx, d in enumerate(opt_data):
+            if str(d) == a:
+                return chr(ord('A') + idx) in res_letters
+        return set(ch for ch in a.upper() if ch in "ABCDEFGH") <= res_letters
+
     def study_work(self, _course, _job,_job_info) -> None:
         if self.tiku.DISABLE or not self.tiku:
             return None
@@ -343,37 +400,19 @@ class Chaoxing:
             res = self.tiku.query(q)
             answer = ''
             if not res:
-                # 无答案(API多次重试仍失败):给确定性兜底答案,保证提交成功、不随机、不留空
-                if q['type'] == 'judgement':
-                    answer = 'true'
-                else:
-                    answer = 'A'
-                logger.error(f"题目无答案,使用确定性兜底答案({answer}),不可恢复时人工核对: {q['title']}")
+                # 三级(推理/联网/最接近)均失败:给客观"最接近"答案,保证提交成功、不随机、不留空
+                answer = 'true' if q['type'] == 'judgement' else 'A'
+                logger.error(f"题目三级均无答案,使用最接近答案({answer}): {q['title']}")
             else:
-                # 根据响应结果选择答案(直接采用 DeepSeek 答案,不再从选项文本取首字符,避免乱填)
-                if q['type'] == "multiple":
-                    # 多选:取 res 中的选项字母,排序去重(学习通提交为无分隔符,如 ABD)
-                    letters = sorted(set(ch for ch in str(res).upper() if ch in "ABCDEFGH"))
-                    answer = "".join(letters) if letters else ''
-                elif q['type'] == 'judgement':
-                    # 判断题:把 res 规范化为 true/false,绝不填入 *** 等异常值
-                    _r = str(res).strip()
-                    if _r in ('正确', '对', '√', '是', 'true', 'TRUE', 'T', 'A'):
-                        answer = 'true'
-                    else:
-                        answer = 'false'   # 错误/错/×/否/false/B/*** 等一律视为 false
-                else:
-                    # 单选/未知:取 res 的首个选项字母(直接用 DeepSeek 答案字母)
-                    letters = [ch for ch in str(res).upper() if ch in "ABCDEFGH"]
-                    answer = letters[0] if letters else ''
-                # 若仍为空或含星号等异常值,强制用确定性兜底,绝不乱填
+                # 匹配:把 DeepSeek 答案按题目实际要求填写
+                answer = self._match_answer(res, q)
+                # 校验:DeepSeek 答案与系统填写是否一致;不一致则重新匹配
+                if not self._verify_consistent(res, answer, q):
+                    logger.error(f"答案不一致或转义异常(res={res}, fill={answer}),重新匹配: {q['title']}")
+                    answer = self._match_answer(res, q, forced=True)
+                # 防线:任何星号/异常值强制重写为最接近合法值
                 if '*' in str(answer) or not answer:
-                    if q['type'] == 'judgement':
-                        answer = 'false'
-                    else:
-                        answer = 'A'
-                # 若仍为空,用 DeepSeek 答案首字符兜底(绝不随机)
-                answer = answer if answer else (str(res)[:1] if res else '')
+                    answer = 'false' if q['type'] == 'judgement' else 'A'
             # 填充答案
             q['answerField'][f'answer{q["id"]}'] = answer
             logger.info(f'{q["title"]} 填写答案为 {answer}')
