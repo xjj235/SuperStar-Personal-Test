@@ -350,25 +350,19 @@ class Chaoxing:
                     answer = 'A'
                 logger.error(f"题目无答案,使用确定性兜底答案({answer}),不可恢复时人工核对: {q['title']}")
             else:
-                # 根据响应结果选择答案
-                options_list = multi_cut(q['options'])
+                # 根据响应结果选择答案(直接采用 DeepSeek 答案,不再从选项文本取首字符,避免乱填)
                 if q['type'] == "multiple":
-                    # 多选处理
-                    for _a in multi_cut(res):
-                        for o in options_list:
-                            if _a.upper() in o:     # 题库返回的答案可能包含选项，如A，B，C，全部转成大写与学习通一致
-                                answer += o[:1]
-                    # 对答案进行排序，否则会提交失败
-                    answer = "".join(sorted(answer))
+                    # 多选:取 res 中的选项字母,排序去重(学习通提交为无分隔符,如 ABD)
+                    letters = sorted(set(ch for ch in str(res).upper() if ch in "ABCDEFGH"))
+                    answer = "".join(letters) if letters else ''
                 elif q['type'] == 'judgement':
                     answer = 'true' if self.tiku.jugement_select(res) else 'false'
                 else:
-                    for o in options_list:
-                        if res in o:
-                            answer = o[:1]
-                            break
-                # 如果未能匹配，用 DeepSeek 答案本身兜底(绝不随机)
-                answer = answer if answer else (res[:1] if res else random_answer(q['options']))
+                    # 单选/未知:取 res 的首个选项字母(直接用 DeepSeek 答案字母)
+                    letters = [ch for ch in str(res).upper() if ch in "ABCDEFGH"]
+                    answer = letters[0] if letters else ''
+                # 若仍为空,用 DeepSeek 答案首字符兜底(绝不随机)
+                answer = answer if answer else (str(res)[:1] if res else '')
             # 填充答案
             q['answerField'][f'answer{q["id"]}'] = answer
             logger.info(f'{q["title"]} 填写答案为 {answer}')
