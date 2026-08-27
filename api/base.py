@@ -356,11 +356,22 @@ class Chaoxing:
                     letters = sorted(set(ch for ch in str(res).upper() if ch in "ABCDEFGH"))
                     answer = "".join(letters) if letters else ''
                 elif q['type'] == 'judgement':
-                    answer = 'true' if self.tiku.jugement_select(res) else 'false'
+                    # 判断题:把 res 规范化为 true/false,绝不填入 *** 等异常值
+                    _r = str(res).strip()
+                    if _r in ('正确', '对', '√', '是', 'true', 'TRUE', 'T', 'A'):
+                        answer = 'true'
+                    else:
+                        answer = 'false'   # 错误/错/×/否/false/B/*** 等一律视为 false
                 else:
                     # 单选/未知:取 res 的首个选项字母(直接用 DeepSeek 答案字母)
                     letters = [ch for ch in str(res).upper() if ch in "ABCDEFGH"]
                     answer = letters[0] if letters else ''
+                # 若仍为空或含星号等异常值,强制用确定性兜底,绝不乱填
+                if '*' in str(answer) or not answer:
+                    if q['type'] == 'judgement':
+                        answer = 'false'
+                    else:
+                        answer = 'A'
                 # 若仍为空,用 DeepSeek 答案首字符兜底(绝不随机)
                 answer = answer if answer else (str(res)[:1] if res else '')
             # 填充答案
