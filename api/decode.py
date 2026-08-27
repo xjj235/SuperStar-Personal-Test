@@ -213,6 +213,18 @@ def decode_questions_info(html_content) -> dict:
         logger.warning("未找到表单元素,返回空题目信息")
         return form_data
 
+    # 提取表单真实提交地址(学习通 action 带 token/enc 等查询参数,必须用它提交)
+    action = (form_tag.get("action") or "")
+    if action.startswith("/"):
+        submit_url = "https://mooc1.chaoxing.com" + action
+    elif action.startswith("//"):
+        submit_url = "https:" + action
+    elif action.startswith("http"):
+        submit_url = action
+    else:
+        submit_url = "https://mooc1.chaoxing.com/mooc-ans/work/addStudentWorkNew"
+    form_data["submit_url"] = submit_url
+
     fd = FontDecoder(html_content)  # 加载字体
     
     # 抽取表单信息

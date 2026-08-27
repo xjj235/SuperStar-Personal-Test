@@ -386,8 +386,10 @@ class Chaoxing:
 
         del questions["questions"]
 
+        # 使用学习通实际表单提交地址(含 token/enc 等查询参数,否则提交会被拒绝)
+        submit_url = questions.get("submit_url") or 'https://mooc1.chaoxing.com/mooc-ans/work/addStudentWorkNew'
         res = _session.post(
-            'https://mooc1.chaoxing.com/mooc-ans/work/addStudentWorkNew',
+            submit_url,
             data=questions,
             headers= {
                 "Host": "mooc1.chaoxing.com",
