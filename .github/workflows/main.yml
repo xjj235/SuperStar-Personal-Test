@@ -13,6 +13,14 @@ on: # 什么时候触发
         options:
           - 'false'
           - 'true'
+      recheck:
+        description: '是否重刷平台已判定通过的视频(确保每个视频都到100%,较慢)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
   # 定时触发(已暂时注释)。如需每天自动运行,取消下面 3 行注释即可。
   # schedule:
   #   - cron: '0 18 * * *'    # 北京时间 次日 02:00
@@ -21,6 +29,7 @@ on: # 什么时候触发
 jobs: # 执行的工作
   run_chaoxing:
     runs-on: ubuntu-latest # 在最新版本的 Ubuntu 操作系统环境下运行
+    timeout-minutes: 360   # GitHub 单次任务上限 6 小时(已拉满);超时后重跑会跳过已完成任务继续刷
     steps: # 要执行的步骤
       - name: Checkout code
         uses: actions/checkout@v3  # 用于将github代码仓库的代码拷贝到工作目录中
@@ -50,4 +59,5 @@ jobs: # 执行的工作
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
           TIKU_SUBMIT: ${{ inputs.submit || 'false' }}  # push 触发默认 false=只保存;手动触发时可选 true=直接提交。不用 Secret,避免日志脱敏
+          CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}  # true=连平台已判定通过的视频也重刷,确保每个视频100%(慢);false=跳过已完成任务,多次运行续刷收敛
         run: python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1

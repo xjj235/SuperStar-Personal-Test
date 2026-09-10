@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
+import os
 import re
 import json
 from bs4 import BeautifulSoup
 from api.logger import logger
 from api.font_decoder import FontDecoder
+
+# 是否强制重刷"平台已判定通过"的视频:开启后,isPassed=True 的视频任务不会被跳过,
+# 仍会从0播到100%,用于确保每个视频都真正看到100%(代价:重刷较慢,已满100%的也会重播)
+RECHECK_PASSED = os.environ.get("CX_RECHECK_PASSED", "").strip().lower() == "true"
 
 def decode_course_list(_text):
     logger.trace("开始解码课程列表...")
@@ -107,7 +112,10 @@ def decode_course_card(_text: str):
         for _card in _cards:
             # 已经通过的任务
             if "isPassed" in _card and _card["isPassed"] is True:
-                continue
+                # 默认跳过已完成任务(便于多次运行续刷、快速收敛);
+                # 开启 CX_RECHECK_PASSED=true 时,视频任务不跳过,强制重刷到100%
+                if not (RECHECK_PASSED and _card.get("type") == "video"):
+                    continue
             # 不属于任务点的任务
             if "job" not in _card or _card["job"] is False:
                 if _card.get('type') and _card['type'] == "read":

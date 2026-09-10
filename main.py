@@ -113,7 +113,12 @@ if __name__ == '__main__':
         for course in course_task:
             logger.info(f"开始学习课程: {course['title']}")
             # 获取当前课程的所有章节
-            point_list = chaoxing.get_course_point(course["courseId"], course["clazzId"], course["cpi"])
+            try:
+                point_list = chaoxing.get_course_point(course["courseId"], course["clazzId"], course["cpi"])
+            except Exception as e:
+                # 单门课程出错不再中断整个运行:记录后继续下一门,保证"一直运行到全部看完"
+                logger.error(f"获取章节列表失败,跳过该课程: {course['title']} -> {type(e).__name__}: {e}")
+                continue
 
             # 为了支持课程任务回滚，采用下标方式遍历任务点
             __point_index = 0
@@ -123,7 +128,13 @@ if __name__ == '__main__':
                 # 获取当前章节的所有任务点
                 jobs = []
                 job_info = None
-                jobs, job_info = chaoxing.get_job_list(course["clazzId"], course["courseId"], course["cpi"], point["id"])
+                try:
+                    jobs, job_info = chaoxing.get_job_list(course["clazzId"], course["courseId"], course["cpi"], point["id"])
+                except Exception as e:
+                    # 单个章节读取失败:跳过该章节,继续后续章节/课程
+                    logger.error(f"读取章节任务点失败,跳过该章节: {point['title']} -> {type(e).__name__}: {e}")
+                    __point_index += 1
+                    continue
                 
                 # bookID = job_info["knowledgeid"] # 获取视频ID
                 
@@ -167,23 +178,38 @@ if __name__ == '__main__':
                         except JSONDecodeError as e:
                             logger.warning("当前任务非视频任务，正在尝试音频任务解码")
                             isAudio = True
+                        except Exception as e:
+                            # 视频任务异常(网络/上报失败等):跳过本任务点,继续后续任务,不再中断整轮
+                            logger.error(f"视频任务异常,跳过该任务点: {job.get('name','')} -> {type(e).__name__}: {e}")
+                            continue
                         if isAudio:
                             try:
                                 chaoxing.study_video(course, job, job_info, _speed=speed, _type="Audio")
                             except JSONDecodeError as e:
                                 logger.warning(f"出现异常任务 -> 任务章节: {course['title']} 任务ID: {job['jobid']}, 已跳过")
+                            except Exception as e:
+                                logger.error(f"音频任务异常,跳过该任务点: {job.get('name','')} -> {type(e).__name__}: {e}")
                     # 文档任务
                     elif job["type"] == "document":
                         logger.trace(f"识别到文档任务, 任务章节: {course['title']} 任务ID: {job['jobid']}")
-                        chaoxing.study_document(course, job)
+                        try:
+                            chaoxing.study_document(course, job)
+                        except Exception as e:
+                            logger.error(f"文档任务异常,跳过该任务点: {job.get('jobid','')} -> {type(e).__name__}: {e}")
                     # 测验任务
                     elif job["type"] == "workid":
                         logger.trace(f"识别到章节检测任务, 任务章节: {course['title']}")
-                        chaoxing.study_work(course, job,job_info)
+                        try:
+                            chaoxing.study_work(course, job,job_info)
+                        except Exception as e:
+                            logger.error(f"章节检测异常,跳过该任务点: {job.get('jobid','')} -> {type(e).__name__}: {e}")
                     # 阅读任务
                     elif job["type"] == "read":
                         logger.trace(f"识别到阅读任务, 任务章节: {course['title']}")
-                        chaoxing.strdy_read(course, job,job_info)
+                        try:
+                            chaoxing.strdy_read(course, job,job_info)
+                        except Exception as e:
+                            logger.error(f"阅读任务异常,跳过该任务点: {job.get('jobid','')} -> {type(e).__name__}: {e}")
                 __point_index += 1
         logger.info("所有课程学习任务已完成")
     except BaseException as e:
