@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 import re
 import time
 import random
@@ -18,6 +19,9 @@ from api.decode import (decode_course_list,
                         decode_questions_info
                         )
 from api.answer import *
+
+# 填空题多空答案的分隔符(学习通按空存库;不同题目可能要求不同,可用环境变量 CX_BLANK_SEP 覆盖)
+BLANK_SEP = os.environ.get("CX_BLANK_SEP", "，")
 
 def get_timestamp():
     return str(int(time.time() * 1000))
@@ -251,13 +255,41 @@ class Chaoxing:
         _url = f"https://mooc1.chaoxing.com/ananas/job/document?jobid={_job['jobid']}&knowledgeid={re.findall(r'nodeId_(.*?)-', _job['otherinfo'])[0]}&courseid={_course['courseId']}&clazzid={_course['clazzId']}&jtoken={_job['jtoken']}&_dc={get_timestamp()}"
         _resp = _session.get(_url)
 
+    def _clean_text_answer(self, text, q=None) -> str:
+        """填空题/简答题文本答案清洗与"转义"处理:
+        - 去掉换行/制表符/控制字符(换行是导致填空答案提交异常的主因),压缩多余空格与全角空格;
+        - 多空题:按题面中空的数量,把答案按空拆开再用统一分隔符连接(分隔符可用环境变量 CX_BLANK_SEP 覆盖);
+        - 去掉成对的引号/书名号等包裹符号,避免平台存库时转义异常;
+        - 若答案只剩符号(如 ***),返回空串表示不可用(交由 study_work 兜底)。"""
+        t = str(text or '')
+        t = re.sub(r'[\r\n\t\x00-\x08\x0b\x0c\x0e-\x1f]+', ' ', t)   # 换行/控制字符 -> 空格
+        t = re.sub(r'[\u3000\s]+', ' ', t).strip()                    # 全角/半角空白压缩
+        if not t:
+            return ''
+        # 去掉整体包裹的引号/括号(仅一层)
+        t = re.sub(r'^[“"‘\'〈《【\[\(]+', '', t)
+        t = re.sub(r'[”"’\'〉》】\]\)]+$', '', t).strip()
+        if not re.sub(r'[\W_]+', '', t, flags=re.UNICODE):
+            return ''   # 只剩符号(如 ***)视为无效答案
+        # 多空题:按空拆分并用统一分隔符连接
+        title = str((q or {}).get('title') or '')
+        blanks = len(re.findall(r'_{2,}', title))
+        if blanks > 1:
+            parts = [p for p in re.split(r'[ ,，、;；|/]+', t) if p]
+            if len(parts) == blanks:      # 拆分数量与空数一致才改写,否则保持原样
+                return BLANK_SEP.join(parts)
+        return t
+
     def _match_answer(self, res, q, forced=False) -> str:
         """把 DeepSeek 答案匹配成【学习通该题的实际填写值】。
         优先使用题目选项的真实 data 值(option_data);无则回退到标准字母/true-false。
-        若无法确定,交由 DeepSeek 辅助(已由三级答题给出)。"""
+        填空题/简答题:直接使用文本答案本身,绝不取首字母或字母。"""
         qtype = q.get('type')
         opt_data = q.get('option_data') or []
         r = str(res).strip()
+        # 填空题/简答题:答案就是文本本身(修复:原先会取首字符,再被强制降级成 A)
+        if qtype in ('completion', 'unknown'):
+            return self._clean_text_answer(r, q)
         if qtype == 'multiple':
             letters = sorted(set(ch for ch in r.upper() if ch in "ABCDEFGH"))
             vals = self._data_of(letters, opt_data)
@@ -299,6 +331,10 @@ class Chaoxing:
         if qtype == 'judgement':
             # 判断题填 true/false,或等于该题选项的 data 值,即合法
             return a in ('true', 'false') or (bool(opt_data) and a in [str(x) for x in opt_data])
+        if qtype in ('completion', 'unknown'):
+            # 填空题/简答题:填写值就是文本答案本身,只要清洗后仍有有效内容即合法
+            # (原先会做字母校验 -> 必然失败 -> 被强制降级成 A,这里修复)
+            return bool(re.sub(r'[\W_]+', '', a, flags=re.UNICODE))
         res_letters = set(ch for ch in str(res).upper() if ch in "ABCDEFGH")
         if not res_letters:
             return False
@@ -412,12 +448,19 @@ class Chaoxing:
                 if not self._verify_consistent(res, answer, q):
                     logger.error(f"答案不一致或转义异常(res={res}, fill={answer}),重新匹配: {q['title']}")
                     answer = self._match_answer(res, q, forced=True)
-                # 防线:任何星号/异常值强制重写为最接近合法值
-                if '*' in str(answer) or not answer:
+                # 防线:分题型处理,避免把填空题的文本答案误改成字母
+                if q['type'] in ('completion', 'unknown'):
+                    # 填空题/简答题:保留文本答案(文本可能含 * 等符号,不做星号清洗);仅当为空时兜底
+                    if not str(answer).strip():
+                        answer = 'A'
+                elif '*' in str(answer) or not answer:
                     answer = 'false' if q['type'] == 'judgement' else 'A'
             # 填充答案
             q['answerField'][f'answer{q["id"]}'] = answer
-            logger.info(f'{q["title"]} 填写答案为 {answer}')
+            if q['type'] in ('completion', 'unknown'):
+                logger.info(f'{q["title"]} 填写答案为(填空/简答) {answer}')
+            else:
+                logger.info(f'{q["title"]} 填写答案为 {answer}')
         
         # 提交模式  现在与题库绑定
         questions['pyFlag'] = self.tiku.get_submit_params()  
