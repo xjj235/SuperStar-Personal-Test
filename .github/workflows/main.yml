@@ -25,11 +25,25 @@ on: # 什么时候触发
   # schedule:
   #   - cron: '0 18 * * *'    # 北京时间 次日 02:00
   #   - cron: '30 22 * * *'   # 北京时间 次日 06:30
- 
+
+# 同一时间只允许一个刷课流程运行:重复触发会排队而不是同时跑,避免两个任务互相打架
+concurrency:
+  group: chaoxing-brush
+  cancel-in-progress: false
+
+# ================== 自动接力说明 ==================
+# GitHub 单个 job 最多只能跑 6 小时,全部课程可能一轮刷不完。
+# 因此把刷课拆成 brush1→brush2→brush3→brush4 四轮串联:
+#   main.py 每轮带 --max-minutes 320(5小时20分)时间预算;
+#   预算用尽 -> 写入 brush_state=continue -> 自动接力下一轮(已完成的任务会被平台标记跳过,不重复刷);
+#   全部任务刷完 -> 写入 brush_state=done -> 后续轮次自动跳过,流程结束。
 jobs: # 执行的工作
-  run_chaoxing:
+  brush1:
+    name: 第1轮刷课
     runs-on: ubuntu-latest # 在最新版本的 Ubuntu 操作系统环境下运行
-    timeout-minutes: 360   # GitHub 单次任务上限 6 小时(已拉满);超时后重跑会跳过已完成任务继续刷
+    timeout-minutes: 360   # 单轮上限 6 小时(GitHub 上限)
+    outputs:
+      remaining: ${{ steps.brush.outputs.remaining }}
     steps: # 要执行的步骤
       - name: Checkout code
         uses: actions/checkout@v3  # 用于将github代码仓库的代码拷贝到工作目录中
@@ -44,20 +58,159 @@ jobs: # 执行的工作
           pip install -r ./requirements.txt 
  
       - name: Run main.py
+        id: brush
+        continue-on-error: true
         # 所有账号、密码与 API Key 全部从 GitHub Secrets 读取，不要直接写在代码里！
         # 在仓库 Settings -> Secrets and variables -> Actions 中配置以下密钥:
         #   CX_USERNAME      : 你的学习通手机号
         #   CX_PASSWORD      : 你的学习通密码
-        #   COURSE_LIST      : 要学习的课程ID列表(逗号分隔，如 244403509,123456)
+        #   COURSE_LIST      : 要学习的课程ID列表(留空/不配置=刷该账号全部课程)
         #   DEEPSEEK_API_KEY : DeepSeek API Key,申请 https://platform.deepseek.com
         #   TIKU_PROVIDER    : 题库类型,填写 TikuDeepSeek(仅支持 DeepSeek 答题)
-        #   TIKU_SUBMIT      : 是否提交答案:true=直接提交 / false=只保存不提交(默认 false,建议保持)
         env:
           CX_USERNAME: ${{ secrets.CX_USERNAME }}
           CX_PASSWORD: ${{ secrets.CX_PASSWORD }}
           COURSE_LIST: ${{ secrets.COURSE_LIST }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
-          TIKU_SUBMIT: ${{ inputs.submit || 'false' }}  # push 触发默认 false=只保存;手动触发时可选 true=直接提交。不用 Secret,避免日志脱敏
-          CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}  # true=连平台已判定通过的视频也重刷,确保每个视频100%(慢);false=跳过已完成任务,多次运行续刷收敛
-        run: python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1
+          TIKU_SUBMIT: ${{ inputs.submit || 'false' }}          # true=正式提交(测验任务点才能完成) / false=只保存
+          CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}   # true=连平台已通过的视频也重刷到100%
+        run: |
+          set +e
+          python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320
+          echo "main.py 退出码: $?"
+          state=$(cat brush_state 2>/dev/null || echo done)
+          echo "本轮结束状态: $state"
+          if [ "$state" = "continue" ]; then
+            echo "remaining=true" >> "$GITHUB_OUTPUT"
+            echo "本轮到时间预算上限,将自动接力下一轮"
+          else
+            echo "remaining=false" >> "$GITHUB_OUTPUT"
+            echo "全部课程任务已刷完,无需接力"
+          fi
+
+  brush2:
+    name: 第2轮刷课(接力)
+    needs: brush1
+    if: always() && needs.brush1.outputs.remaining == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      remaining: ${{ steps.brush.outputs.remaining }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+      - name: Install requirements.txt
+        run: pip install -r ./requirements.txt
+      - name: Run main.py
+        id: brush
+        continue-on-error: true
+        env:
+          CX_USERNAME: ${{ secrets.CX_USERNAME }}
+          CX_PASSWORD: ${{ secrets.CX_PASSWORD }}
+          COURSE_LIST: ${{ secrets.COURSE_LIST }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
+          TIKU_SUBMIT: ${{ inputs.submit || 'false' }}
+          CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}
+        run: |
+          set +e
+          python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320
+          echo "main.py 退出码: $?"
+          state=$(cat brush_state 2>/dev/null || echo done)
+          echo "本轮结束状态: $state"
+          if [ "$state" = "continue" ]; then
+            echo "remaining=true" >> "$GITHUB_OUTPUT"
+            echo "本轮到时间预算上限,将自动接力下一轮"
+          else
+            echo "remaining=false" >> "$GITHUB_OUTPUT"
+            echo "全部课程任务已刷完,无需接力"
+          fi
+
+  brush3:
+    name: 第3轮刷课(接力)
+    needs: brush2
+    if: always() && needs.brush2.outputs.remaining == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      remaining: ${{ steps.brush.outputs.remaining }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+      - name: Install requirements.txt
+        run: pip install -r ./requirements.txt
+      - name: Run main.py
+        id: brush
+        continue-on-error: true
+        env:
+          CX_USERNAME: ${{ secrets.CX_USERNAME }}
+          CX_PASSWORD: ${{ secrets.CX_PASSWORD }}
+          COURSE_LIST: ${{ secrets.COURSE_LIST }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
+          TIKU_SUBMIT: ${{ inputs.submit || 'false' }}
+          CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}
+        run: |
+          set +e
+          python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320
+          echo "main.py 退出码: $?"
+          state=$(cat brush_state 2>/dev/null || echo done)
+          echo "本轮结束状态: $state"
+          if [ "$state" = "continue" ]; then
+            echo "remaining=true" >> "$GITHUB_OUTPUT"
+            echo "本轮到时间预算上限,将自动接力下一轮"
+          else
+            echo "remaining=false" >> "$GITHUB_OUTPUT"
+            echo "全部课程任务已刷完,无需接力"
+          fi
+
+  brush4:
+    name: 第4轮刷课(接力)
+    needs: brush3
+    if: always() && needs.brush3.outputs.remaining == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      remaining: ${{ steps.brush.outputs.remaining }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+      - name: Install requirements.txt
+        run: pip install -r ./requirements.txt
+      - name: Run main.py
+        id: brush
+        continue-on-error: true
+        env:
+          CX_USERNAME: ${{ secrets.CX_USERNAME }}
+          CX_PASSWORD: ${{ secrets.CX_PASSWORD }}
+          COURSE_LIST: ${{ secrets.COURSE_LIST }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
+          TIKU_SUBMIT: ${{ inputs.submit || 'false' }}
+          CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}
+        run: |
+          set +e
+          python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320
+          echo "main.py 退出码: $?"
+          state=$(cat brush_state 2>/dev/null || echo done)
+          echo "本轮结束状态: $state"
+          if [ "$state" = "continue" ]; then
+            echo "remaining=true" >> "$GITHUB_OUTPUT"
+            echo "本轮到时间预算上限(已是最后一轮,如仍未刷完请再手动触发一次)"
+          else
+            echo "remaining=false" >> "$GITHUB_OUTPUT"
+            echo "全部课程任务已刷完,无需接力"
+          fi
