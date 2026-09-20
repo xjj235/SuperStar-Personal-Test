@@ -343,14 +343,18 @@ class Chaoxing:
             # 填空题/简答题:填写值就是文本答案本身,只要清洗后仍有有效内容即合法
             # (原先会做字母校验 -> 必然失败 -> 被强制降级成 A,这里修复)
             return bool(re.sub(r'[\W_]+', '', a, flags=re.UNICODE))
-        res_letters = set(ch for ch in str(res).upper() if ch in "ABCDEFGH")
+        res_letters = sorted(set(ch for ch in str(res).upper() if ch in "ABCDEFGH"))
         if not res_letters:
             return False
-        # 答案必须是 res 字母对应的选项 data 值(或字母,且属于 res)
-        for idx, d in enumerate(opt_data):
-            if str(d) == a:
-                return chr(ord('A') + idx) in res_letters
-        return set(ch for ch in a.upper() if ch in "ABCDEFGH") <= res_letters
+        if qtype == 'multiple':
+            # 多选题:按题目 option_data 正向映射后应与填写值完全一致。
+            # 注意:部分题目的选项 data 值是乱序字母(如 res=B,D 时正确填写值是 "DA"),
+            # 原先用"填写的字母集合 ⊆ res 字母集合"判断会误报"答案不一致",这里改为正向比对。
+            expected = self._data_of(res_letters, opt_data)
+            return a == expected or a.upper() == expected.upper()
+        # single / 其它:填写值应等于 res 对应选项的 data 值(无 data 时即字母本身)
+        expected = self._data_of(res_letters[:1], opt_data)
+        return a == expected or a.upper() == expected.upper()
 
     def study_work(self, _course, _job,_job_info) -> None:
         if self.tiku.DISABLE or not self.tiku:
