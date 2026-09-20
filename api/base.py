@@ -19,6 +19,7 @@ from api.decode import (decode_course_list,
                         decode_questions_info
                         )
 from api.answer import *
+from api.deadline import check as check_deadline, can_start as can_start_task
 
 # 填空题多空答案的分隔符(学习通按空存库;不同题目可能要求不同,可用环境变量 CX_BLANK_SEP 覆盖)
 BLANK_SEP = os.environ.get("CX_BLANK_SEP", "，")
@@ -229,7 +230,14 @@ class Chaoxing:
             _isFinished = False
             _playingTime = 0
             logger.info(f"开始任务: {_job['name']}, 总时长: {_duration}秒")
+            # 软预算:剩余时间不足以播完这个视频时,不开始播放,留到下一轮继续
+            # (避免"开始了一个超长视频,结果撞上 GitHub 6 小时硬上限被强杀,导致接力链中断")
+            if not can_start_task(int(_duration)):
+                logger.warning(f"本轮剩余时间不足以播完该视频({_duration}秒),留待下一轮继续: {_job['name']}")
+                return
             while not _isFinished:
+                # 硬预算:播放过程中(每上报一次进度)检查一次,达到上限立即优雅收尾
+                check_deadline()
                 _isPassed = self.video_progress_log(_session, _course, _job, _job_info, _dtoken, _duration, _playingTime, _type)
                 # 修改:不再因系统判定90%已通过(isPassed=True)而提前结束，
                 # 必须把视频/音频看到100%(_playingTime达到总时长)才算完成
@@ -433,6 +441,10 @@ class Chaoxing:
 
         # 搜题
         for q in questions['questions']:
+            # 硬预算:每答一题检查一次,避免单个大作业答题耗时过长撞上 6 小时上限被强杀
+            # (抛出的 TimeBudgetExceeded 继承 BaseException,不会被上层 except Exception 吞掉,
+            #  作业也不会以"半截答案"提交,下一轮会重新作答)
+            check_deadline()
             res = self.tiku.query(q)
             answer = ''
             if not res:

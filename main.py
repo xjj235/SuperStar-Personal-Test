@@ -6,6 +6,7 @@ from api.logger import logger
 from api.base import Chaoxing, Account
 from api.exceptions import LoginError, FormatError, JSONDecodeError,MaxRollBackError
 from api.answer import Tiku
+from api.deadline import TimeBudgetExceeded, set_budget, check as check_deadline
 from urllib3 import disable_warnings,exceptions
 import os
 
@@ -78,17 +79,6 @@ class RollBackManager:
 BRUSH_STATE_FILE = "brush_state"
 
 
-class TimeBudgetExceeded(Exception):
-    """本轮运行已达时间预算,剩余任务交由下一轮自动接力继续"""
-    pass
-
-
-def check_time_budget(_start: float, _max_minutes: float) -> None:
-    """达到时间预算时抛出 TimeBudgetExceeded,让程序优雅收尾(避免被 GitHub 6 小时上限强杀)"""
-    if _max_minutes and (time.time() - _start) > _max_minutes * 60:
-        raise TimeBudgetExceeded()
-
-
 def write_brush_state(_state: str) -> None:
     """写入本轮状态,供工作流接力判断"""
     try:
@@ -107,6 +97,8 @@ if __name__ == '__main__':
         RB = RollBackManager()
         # 初始化登录信息
         username, password, course_list, speed, tiku_config, max_minutes = init_config()
+        # 设置全局时间预算(api.base 中的视频/答题长操作也会检查,避免撞上 GitHub 6 小时上限被强杀)
+        set_budget(max_minutes)
         if max_minutes:
             logger.info(f"本轮时间预算: {max_minutes} 分钟(达到后自动收尾,由工作流接力下一轮)")
         # 规范化播放速度的输入值
@@ -147,7 +139,7 @@ if __name__ == '__main__':
         # 开始遍历要学习的课程列表
         logger.info(f"课程列表过滤完毕，当前课程任务数量: {len(course_task)}")
         for course in course_task:
-            check_time_budget(_start_time, max_minutes)   # 时间预算检查:超时则优雅退出交由下一轮接力
+            check_deadline()   # 时间预算检查:超时则优雅退出交由下一轮接力
             logger.info(f"开始学习课程: {course['title']}")
             # 获取当前课程的所有章节
             try:
@@ -160,7 +152,7 @@ if __name__ == '__main__':
             # 为了支持课程任务回滚，采用下标方式遍历任务点
             __point_index = 0
             while __point_index < len(point_list["points"]):
-                check_time_budget(_start_time, max_minutes)   # 时间预算检查
+                check_deadline()   # 时间预算检查
                 point = point_list["points"][__point_index]
                 logger.info(f'当前章节: {point["title"]}')
                 # 获取当前章节的所有任务点
@@ -199,7 +191,7 @@ if __name__ == '__main__':
                     continue
                 # 遍历所有任务点
                 for job in jobs:
-                    check_time_budget(_start_time, max_minutes)   # 时间预算检查(视频/测验前)
+                    check_deadline()   # 时间预算检查(视频/测验前)
                     # 视频任务
                     if job["type"] == "video":
                         # TODO: 目前这个记录功能还不够完善，中途退出的课程ID也会被记录
