@@ -110,6 +110,9 @@ def decode_course_card(_text: str):
         _cards = _cards["attachments"]
         _job_list = []
         for _card in _cards:
+            # 卡片缺少 type 字段(转码中/异常卡片):直接跳过,避免 KeyError 导致整个章节读取失败
+            if not _card.get("type"):
+                continue
             # 已经通过的任务
             if "isPassed" in _card and _card["isPassed"] is True:
                 # 默认跳过已完成任务(便于多次运行续刷、快速收敛);
@@ -139,8 +142,11 @@ def decode_course_card(_text: str):
             if _card["type"] == "video":
                 _job = {}
                 _job["type"] = "video"
+                if not _card.get("objectId") or not _card.get("property"):
+                    logger.warning("视频卡片信息不完整(缺 objectId/property)，已跳过...")
+                    continue
                 _job["jobid"] = _card["jobid"]
-                _job["name"] = _card["property"]["name"]
+                _job["name"] = (_card.get("property") or {}).get("name", "")
                 _job["otherinfo"] = _card["otherInfo"]
                 try:
                     _job["mid"] = _card["mid"]
@@ -161,7 +167,10 @@ def decode_course_card(_text: str):
                 _job["mid"] = _card["mid"]
                 _job["enc"] = _card["enc"]
                 _job["aid"] = _card["aid"]
-                _job["objectid"] = _card["property"]["objectid"]
+                _job["objectid"] = (_card.get("property") or {}).get("objectid", "")
+                if not _job["objectid"]:
+                    logger.warning("文档卡片缺少 objectid，已跳过...")
+                    continue
                 _job_list.append(_job)
                 continue
             if _card["type"] == "workid":

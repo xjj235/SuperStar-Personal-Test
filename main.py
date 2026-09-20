@@ -138,6 +138,7 @@ if __name__ == '__main__':
             course_task = all_course
         # 开始遍历要学习的课程列表
         logger.info(f"课程列表过滤完毕，当前课程任务数量: {len(course_task)}")
+        _read_fail = 0   # 统计本轮读取失败的章节数(>0 则本轮不能算"刷完",下一轮要重试)
         for course in course_task:
             check_deadline()   # 时间预算检查:超时则优雅退出交由下一轮接力
             logger.info(f"开始学习课程: {course['title']}")
@@ -161,7 +162,8 @@ if __name__ == '__main__':
                 try:
                     jobs, job_info = chaoxing.get_job_list(course["clazzId"], course["courseId"], course["cpi"], point["id"])
                 except Exception as e:
-                    # 单个章节读取失败:跳过该章节,继续后续章节/课程
+                    # 单个章节读取失败:跳过该章节,继续后续章节/课程;并记录以便下一轮重试
+                    _read_fail += 1
                     logger.error(f"读取章节任务点失败,跳过该章节: {point['title']} -> {type(e).__name__}: {e}")
                     __point_index += 1
                     continue
@@ -243,8 +245,13 @@ if __name__ == '__main__':
                             logger.error(f"阅读任务异常,跳过该任务点: {job.get('jobid','')} -> {type(e).__name__}: {e}")
                 __point_index += 1
         logger.info("所有课程学习任务已完成")
-        # 全部课程任务点已处理完毕 -> 通知工作流无需接力
-        write_brush_state("done")
+        if _read_fail:
+            # 有章节没读到(网络/解析异常):不能算刷完,标记 continue 让下一轮重试
+            logger.warning(f"本轮有 {_read_fail} 个章节读取失败,标记 continue,下一轮将重试这些章节")
+            write_brush_state("continue")
+        else:
+            # 全部课程任务点已处理完毕 -> 通知工作流无需接力
+            write_brush_state("done")
     except TimeBudgetExceeded:
         # 本轮时间预算耗尽:优雅收尾,由工作流自动接力下一轮继续刷(任务卡片会自动跳过已完成的)
         _used = int((time.time() - _start_time) / 60)

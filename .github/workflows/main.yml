@@ -79,7 +79,7 @@ jobs: # 执行的工作
           set +e
           python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320
           echo "main.py 退出码: $?"
-          state=$(cat brush_state 2>/dev/null || echo done)
+          state=$(cat brush_state 2>/dev/null || echo continue)
           echo "本轮结束状态: $state"
           if [ "$state" = "continue" ]; then
             echo "remaining=true" >> "$GITHUB_OUTPUT"
@@ -92,7 +92,7 @@ jobs: # 执行的工作
   brush2:
     name: 第2轮刷课(接力)
     needs: brush1
-    if: always() && needs.brush1.outputs.remaining != 'false'
+    if: always() && needs.brush1.result != 'skipped' && needs.brush1.outputs.remaining != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     outputs:
@@ -121,7 +121,7 @@ jobs: # 执行的工作
           set +e
           python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320
           echo "main.py 退出码: $?"
-          state=$(cat brush_state 2>/dev/null || echo done)
+          state=$(cat brush_state 2>/dev/null || echo continue)
           echo "本轮结束状态: $state"
           if [ "$state" = "continue" ]; then
             echo "remaining=true" >> "$GITHUB_OUTPUT"
@@ -134,7 +134,7 @@ jobs: # 执行的工作
   brush3:
     name: 第3轮刷课(接力)
     needs: brush2
-    if: always() && needs.brush2.outputs.remaining != 'false'
+    if: always() && needs.brush2.result != 'skipped' && needs.brush2.outputs.remaining != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     outputs:
@@ -163,7 +163,7 @@ jobs: # 执行的工作
           set +e
           python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320
           echo "main.py 退出码: $?"
-          state=$(cat brush_state 2>/dev/null || echo done)
+          state=$(cat brush_state 2>/dev/null || echo continue)
           echo "本轮结束状态: $state"
           if [ "$state" = "continue" ]; then
             echo "remaining=true" >> "$GITHUB_OUTPUT"
@@ -176,7 +176,7 @@ jobs: # 执行的工作
   brush4:
     name: 第4轮刷课(接力)
     needs: brush3
-    if: always() && needs.brush3.outputs.remaining != 'false'
+    if: always() && needs.brush3.result != 'skipped' && needs.brush3.outputs.remaining != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     outputs:
@@ -205,7 +205,7 @@ jobs: # 执行的工作
           set +e
           python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320
           echo "main.py 退出码: $?"
-          state=$(cat brush_state 2>/dev/null || echo done)
+          state=$(cat brush_state 2>/dev/null || echo continue)
           echo "本轮结束状态: $state"
           if [ "$state" = "continue" ]; then
             echo "remaining=true" >> "$GITHUB_OUTPUT"
