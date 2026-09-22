@@ -10,6 +10,9 @@ from api.font_decoder import FontDecoder
 # 仍会从0播到100%,用于确保每个视频都真正看到100%(代价:重刷较慢,已满100%的也会重播)
 RECHECK_PASSED = os.environ.get("CX_RECHECK_PASSED", "").strip().lower() == "true"
 
+# 诊断开关:开启后打印视频卡片的原始 JSON(用于核对平台"已通过"视频的真实进度字段)
+DUMP_CARDS = os.environ.get("CX_DUMP_CARDS", "").strip().lower() == "true"
+
 def decode_course_list(_text):
     logger.trace("开始解码课程列表...")
     _soup = BeautifulSoup(_text, "lxml")
@@ -109,15 +112,30 @@ def decode_course_card(_text: str):
         _job_info['knowledgeid'] = _cards["defaults"]["knowledgeid"]
         _cards = _cards["attachments"]
         _job_list = []
+        _passed_video = 0      # 平台标记"已通过"而被跳过的视频数
+        _passed_other = 0      # 其它被跳过的已完成任务数
         for _card in _cards:
             # 卡片缺少 type 字段(转码中/异常卡片):直接跳过,避免 KeyError 导致整个章节读取失败
             if not _card.get("type"):
                 continue
+            # 诊断:打印视频卡片原始 JSON(仅当 CX_DUMP_CARDS=true),用于核对其 progress/isPassed 字段
+            if DUMP_CARDS and _card.get("type") == "video":
+                logger.info("[卡片JSON] " + json.dumps(_card, ensure_ascii=False)[:1000])
             # 已经通过的任务
             if "isPassed" in _card and _card["isPassed"] is True:
                 # 默认跳过已完成任务(便于多次运行续刷、快速收敛);
                 # 开启 CX_RECHECK_PASSED=true 时,视频任务不跳过,强制重刷到100%
                 if not (RECHECK_PASSED and _card.get("type") == "video"):
+                    if _card.get("type") == "video":
+                        _passed_video += 1
+                        _vname = (_card.get('property') or {}).get('name', '')
+                        if DUMP_CARDS:
+                            logger.info(f"跳过已完成视频(平台标记通过): {_vname} | 卡片JSON=" +
+                                        json.dumps(_card, ensure_ascii=False)[:800])
+                        else:
+                            logger.info(f"跳过已完成视频(平台标记通过): {_vname}")
+                    else:
+                        _passed_other += 1
                     continue
             # 不属于任务点的任务
             if "job" not in _card or _card["job"] is False:
@@ -188,6 +206,9 @@ def decode_course_card(_text: str):
             if _card["type"] == "vote":
                 # 调查问卷 同上
                 continue
+        # 供上层统计:本章节有多少任务被平台标记"已通过"而跳过
+        _job_info['skipped_passed_video'] = _passed_video
+        _job_info['skipped_passed_other'] = _passed_other
         return _job_list, _job_info
     
 

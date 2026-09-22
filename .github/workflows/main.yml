@@ -21,6 +21,14 @@ on: # 什么时候触发
         options:
           - 'false'
           - 'true'
+      dump:
+        description: '诊断:打印视频卡片原始JSON与跳过详情(排查"视频没刷"用,日常保持false)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
   # 定时触发(已暂时注释)。如需每天自动运行,取消下面 3 行注释即可。
   # schedule:
   #   - cron: '0 18 * * *'    # 北京时间 次日 02:00
@@ -74,7 +82,9 @@ jobs: # 执行的工作
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
           TIKU_SUBMIT: ${{ inputs.submit || 'false' }}          # true=正式提交(测验任务点才能完成) / false=只保存
-          CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}   # true=连平台已通过的视频也重刷到100%
+          CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}
+          CX_DUMP_CARDS: ${{ inputs.dump || 'false' }}   # true=连平台已通过的视频也重刷到100%
+          CX_DUMP_CARDS: ${{ inputs.dump || 'false' }}          # true=打印视频卡片原始JSON(诊断用)
         run: |
           set +e
           python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320
@@ -117,6 +127,7 @@ jobs: # 执行的工作
           TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
           TIKU_SUBMIT: ${{ inputs.submit || 'false' }}
           CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}
+          CX_DUMP_CARDS: ${{ inputs.dump || 'false' }}
         run: |
           set +e
           python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320
@@ -159,6 +170,7 @@ jobs: # 执行的工作
           TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
           TIKU_SUBMIT: ${{ inputs.submit || 'false' }}
           CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}
+          CX_DUMP_CARDS: ${{ inputs.dump || 'false' }}
         run: |
           set +e
           python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320
@@ -201,6 +213,7 @@ jobs: # 执行的工作
           TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
           TIKU_SUBMIT: ${{ inputs.submit || 'false' }}
           CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}
+          CX_DUMP_CARDS: ${{ inputs.dump || 'false' }}
         run: |
           set +e
           python main.py -u "$CX_USERNAME" -p "$CX_PASSWORD" -l "$COURSE_LIST" -s 1 --max-minutes 320

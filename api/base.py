@@ -221,6 +221,10 @@ class Chaoxing:
         _session.headers.update()
         _info_url = f"https://mooc1.chaoxing.com/ananas/status/{_job['objectid']}?k={self.get_fid()}&flag=normal"
         _video_info = _session.get(_info_url).json()
+        # 修复:视频信息获取失败时原先静默跳过(无任何日志),导致"有些视频没刷"却查不出原因
+        if not isinstance(_video_info, dict) or _video_info.get("status") != "success":
+            logger.warning(f"视频信息获取失败(status={_video_info.get('status') if isinstance(_video_info, dict) else type(_video_info).__name__}),跳过该任务点: {_job.get('name', '')}")
+            return
         if _video_info["status"] == "success":
             _dtoken = _video_info["dtoken"]
             _duration = _video_info["duration"]

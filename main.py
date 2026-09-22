@@ -167,6 +167,10 @@ if __name__ == '__main__':
                     logger.error(f"读取章节任务点失败,跳过该章节: {point['title']} -> {type(e).__name__}: {e}")
                     __point_index += 1
                     continue
+                # 章节任务统计(便于核查"有些视频没刷":是待处理、还是被平台标记已通过而跳过)
+                _sk_v = (job_info or {}).get('skipped_passed_video', 0)
+                _sk_o = (job_info or {}).get('skipped_passed_other', 0)
+                logger.info(f'章节任务统计[{point["title"]}]: 待处理 {len(jobs)} 个 | 平台已通过跳过: 视频 {_sk_v} 个, 其它 {_sk_o} 个')
                 
                 # bookID = job_info["knowledgeid"] # 获取视频ID
                 
