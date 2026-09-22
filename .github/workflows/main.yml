@@ -82,8 +82,7 @@ jobs: # 执行的工作
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           TIKU_PROVIDER: ${{ secrets.TIKU_PROVIDER }}
           TIKU_SUBMIT: ${{ inputs.submit || 'false' }}          # true=正式提交(测验任务点才能完成) / false=只保存
-          CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}
-          CX_DUMP_CARDS: ${{ inputs.dump || 'false' }}   # true=连平台已通过的视频也重刷到100%
+          CX_RECHECK_PASSED: ${{ inputs.recheck || 'false' }}   # true=连平台已通过的视频也重刷到100%
           CX_DUMP_CARDS: ${{ inputs.dump || 'false' }}          # true=打印视频卡片原始JSON(诊断用)
         run: |
           set +e
