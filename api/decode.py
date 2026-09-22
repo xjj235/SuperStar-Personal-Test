@@ -13,6 +13,14 @@ RECHECK_PASSED = os.environ.get("CX_RECHECK_PASSED", "").strip().lower() == "tru
 # 诊断开关:开启后打印视频卡片的原始 JSON(用于核对平台"已通过"视频的真实进度字段)
 DUMP_CARDS = os.environ.get("CX_DUMP_CARDS", "").strip().lower() == "true"
 
+
+def _num_of(_v, _default: float = 0.0) -> float:
+    """安全转数值:卡片里的 headOffset/attDuration 可能是字符串、空值或缺失"""
+    try:
+        return float(_v)
+    except (TypeError, ValueError):
+        return _default
+
 def decode_course_list(_text):
     logger.trace("开始解码课程列表...")
     _soup = BeautifulSoup(_text, "lxml")
@@ -112,28 +120,40 @@ def decode_course_card(_text: str):
         _job_info['knowledgeid'] = _cards["defaults"]["knowledgeid"]
         _cards = _cards["attachments"]
         _job_list = []
-        _passed_video = 0      # 平台标记"已通过"而被跳过的视频数
+        _passed_video = 0      # 平台标记"已通过"且确实已满100%而被跳过的视频数
         _passed_other = 0      # 其它被跳过的已完成任务数
+        _redone_video = 0      # 平台标记"已通过"但实际未满100%,需要重刷的视频数
         for _card in _cards:
             # 卡片缺少 type 字段(转码中/异常卡片):直接跳过,避免 KeyError 导致整个章节读取失败
             if not _card.get("type"):
                 continue
-            # 诊断:打印视频卡片原始 JSON(仅当 CX_DUMP_CARDS=true),用于核对其 progress/isPassed 字段
-            if DUMP_CARDS and _card.get("type") == "video":
-                logger.info("[卡片JSON] " + json.dumps(_card, ensure_ascii=False)[:1000])
             # 已经通过的任务
             if "isPassed" in _card and _card["isPassed"] is True:
-                # 默认跳过已完成任务(便于多次运行续刷、快速收敛);
-                # 开启 CX_RECHECK_PASSED=true 时,视频任务不跳过,强制重刷到100%
-                if not (RECHECK_PASSED and _card.get("type") == "video"):
-                    if _card.get("type") == "video":
+                _ctype = _card.get("type")
+                _vname = (_card.get('property') or {}).get('name', '')
+                # 关键修复:平台在约90%进度时就会把视频标记为 isPassed=True,
+                # 若只用 isPassed 判断,就会把"没看到100%"的视频永久跳过。
+                # 这里按卡片里的真实进度判定:headOffset(毫秒) 达到 attDuration(秒)*1000 才算真看完。
+                _finished = True
+                _head = _dur = 0.0
+                if _ctype == "video":
+                    _head = _num_of(_card.get("headOffset")) / 1000.0   # 已看进度(秒)
+                    _dur = _num_of(_card.get("attDuration"))            # 总时长(秒)
+                    if _dur > 0:
+                        _finished = _head >= _dur - 1                   # 允许1秒误差
+                # 需要重刷:视频没真正看完;或开启 CX_RECHECK_PASSED 强制全量重刷
+                if _ctype == "video" and ((not _finished) or RECHECK_PASSED):
+                    if _finished:
+                        logger.info(f"强制重刷已完成视频(CX_RECHECK_PASSED=true): {_vname}")
+                    else:
+                        _redone_video += 1
+                        logger.warning(f"视频平台标记通过但未满100%({_head:.0f}/{_dur:.0f}秒),将重刷到100%: {_vname}")
+                    # 不 continue:继续往下解析,生成待处理任务交给 study_video 重刷
+                else:
+                    if _ctype == "video":
                         _passed_video += 1
-                        _vname = (_card.get('property') or {}).get('name', '')
                         if DUMP_CARDS:
-                            logger.info(f"跳过已完成视频(平台标记通过): {_vname} | 卡片JSON=" +
-                                        json.dumps(_card, ensure_ascii=False)[:800])
-                        else:
-                            logger.info(f"跳过已完成视频(平台标记通过): {_vname}")
+                            logger.info(f"[卡片] video 已满100%({_head:.0f}/{_dur:.0f}秒),跳过: {_vname}")
                     else:
                         _passed_other += 1
                     continue
@@ -206,9 +226,10 @@ def decode_course_card(_text: str):
             if _card["type"] == "vote":
                 # 调查问卷 同上
                 continue
-        # 供上层统计:本章节有多少任务被平台标记"已通过"而跳过
+        # 供上层统计:本章节有多少任务被平台标记"已通过"而跳过 / 有多少视频需重刷到100%
         _job_info['skipped_passed_video'] = _passed_video
         _job_info['skipped_passed_other'] = _passed_other
+        _job_info['redone_video'] = _redone_video
         return _job_list, _job_info
     
 
