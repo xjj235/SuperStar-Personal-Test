@@ -101,7 +101,7 @@ jobs: # 执行的工作
   brush2:
     name: 第2轮刷课(接力)
     needs: brush1
-    if: always() && needs.brush1.result != 'skipped' && needs.brush1.outputs.remaining != 'false'
+    if: always() && !cancelled() && needs.brush1.result != 'skipped' && needs.brush1.outputs.remaining != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     outputs:
@@ -144,7 +144,7 @@ jobs: # 执行的工作
   brush3:
     name: 第3轮刷课(接力)
     needs: brush2
-    if: always() && needs.brush2.result != 'skipped' && needs.brush2.outputs.remaining != 'false'
+    if: always() && !cancelled() && needs.brush2.result != 'skipped' && needs.brush2.outputs.remaining != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     outputs:
@@ -187,7 +187,7 @@ jobs: # 执行的工作
   brush4:
     name: 第4轮刷课(接力)
     needs: brush3
-    if: always() && needs.brush3.result != 'skipped' && needs.brush3.outputs.remaining != 'false'
+    if: always() && !cancelled() && needs.brush3.result != 'skipped' && needs.brush3.outputs.remaining != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     outputs:
